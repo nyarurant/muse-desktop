@@ -4,8 +4,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { MODES, getPlan, evaluate } = require('./approval-policy');
-const { resolveWorkspacePath } = require('./local-agent');
+const { resolveToolPath } = require('./local-agent');
 const { createPrefs, fitToDisplays, isMuseUrl } = require('./prefs');
 const {
   app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, screen, shell,
@@ -30,7 +29,6 @@ let quitting = false;
 let shortcutRegistered = false;
 let pendingMaximize = false;
 let workspace = path.join(os.homedir(), 'MuseDesktopWorkspace');
-let approvalMode = 'auto'; // Not persisted; resets on every launch or workspace change.
 let active = null;
 let workflowRunning = false;
 let stopWorkflow = false;
@@ -47,9 +45,6 @@ function sendTools(channel, data) {
   if (toolsWindow && !toolsWindow.isDestroyed()) {
     toolsWindow.webContents.send(channel, data);
   }
-}
-function sendApprovalState() {
-  sendTools('tools:approval-state', {mode: approvalMode});
 }
 
 function showMuse() {
@@ -210,23 +205,20 @@ function endProcess(proc) {
   }
 }
 
-function executeLocal(command, plan, autoApproved, capture = false) {
+// Local commands run without confirmation, through the shell, starting in the workspace folder.
+function executeLocal(command, capture = false) {
   if (active) throw new Error('Another command is already running');
   const options = {
     cwd: workspace,
-    shell: !plan, // Unclassified commands use shell only after prompt or Bypass opt-in.
+    shell: true,
     windowsHide: true,
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   };
-  // Direct argv execution for allowlisted commands; no shell interpolation.
-  const proc = plan
-    ? spawn(plan.command, plan.args, options)
-    : spawn(command, options);
+  const proc = spawn(command, options);
   active = { proc, total: 0, command };
   let captured = '';
-  sendTools('tools:status', { state: 'running', command, autoApproved });
-  sendTools('tools:output', `\n[${autoApproved ? 'AUTO OK' : 'Manual approval'}] ${command}\n`);
+  sendTools('tools:status', { state: 'running', command });
   const timeout = setTimeout(() => {
     if (active?.proc === proc) {
       sendTools('tools:output', '\n[10 minute execution limit reached; terminating]\n');
@@ -269,51 +261,18 @@ function executeLocal(command, plan, autoApproved, capture = false) {
 
 
 // ---- Local agent bridge -------------------------------------------------
-// The agent loop itself lives in desktop-api.js (it owns the gateway
-// client); everything that touches this machine goes through here, so
-// agent calls get exactly the manual tools window's safeguards: the
-// shared single-run lock, the approval policy for commands, a prompt
-// for file changes unless Bypass is on, and file tools confined to the
-// workspace (resolveWorkspacePath plus a realpath check, so a symlink
-// inside the workspace cannot be used to escape it).
-async function confirmAgentAction(title, detail) {
-  const parent = (toolsWindow && !toolsWindow.isDestroyed()) ? toolsWindow : museWindow;
-  if (!parent || parent.isDestroyed()) return false;
-  const result = await dialog.showMessageBox(parent, {
-    type: 'warning', buttons: ['Cancel', 'Allow once'],
-    defaultId: 0, cancelId: 0, noLink: true, title, message: title, detail,
-  });
-  return result.response === 1;
-}
-function confinedTarget(root, rel) {
-  const target = resolveWorkspacePath(root, rel);
-  if (!target) throw new Error(`Path points outside the workspace: ${rel}`);
-  let probe = target;
-  while (!fs.existsSync(probe)) {
-    const parent = path.dirname(probe);
-    if (parent === probe) break;
-    probe = parent;
-  }
-  const realRoot = fs.realpathSync(root);
-  const realProbe = fs.realpathSync(probe);
-  if (realProbe !== realRoot && !realProbe.startsWith(realRoot + path.sep)) {
-    throw new Error(`Path escapes the workspace through a symbolic link: ${rel}`);
-  }
-  return target;
-}
+// The agent loop itself lives in desktop-api.js (it owns the gateway client); everything that
+// touches this machine goes through here. There are no confirmations and no folder limits:
+// commands run like the manual runner, and file paths may be absolute or workspace-relative.
+// Only the single-run lock is shared with the tools window.
 async function executeAgentCall(call) {
   try {
     if (active || workflowRunning) return {ok: false, output: 'Another local command or workflow is already running.'};
     const root = workspace;
+    const target = call.path !== undefined || call.tool === 'list' ? resolveToolPath(root, call.path || '.') : null;
+    if ((call.tool !== 'run') && !target) return {ok: false, output: `Invalid path: ${call.path}`};
     if (call.tool === 'run') {
-      const decision = evaluate(call.command, approvalMode);
-      if (decision.prompt) {
-        const allowed = await confirmAgentAction('Agent command approval',
-          `The local agent (Muse) asked to run a command.\n\nWorking directory: ${root}\nApproval mode: ${approvalMode}\n\n${call.command}\n\nThis directory is NOT a sandbox. Commands can access files outside it.`);
-        if (!allowed) return {ok: false, output: 'User denied this command.'};
-      }
-      if (root !== workspace) return {ok: false, output: 'Workspace changed; command not run.'};
-      const result = await executeLocal(call.command, decision.plan, !decision.prompt, true);
+      const result = await executeLocal(call.command, true);
       const out = (result.output || '').trim();
       return {
         ok: !result.errored && result.code === 0,
@@ -321,7 +280,6 @@ async function executeAgentCall(call) {
       };
     }
     if (call.tool === 'read') {
-      const target = confinedTarget(root, call.path);
       const stat = fs.statSync(target);
       if (!stat.isFile()) return {ok: false, output: `Not a file: ${call.path}`};
       if (stat.size > 2 * 1024 * 1024) return {ok: false, output: `File is too large to read (${stat.size} bytes): ${call.path}`};
@@ -334,33 +292,23 @@ async function executeAgentCall(call) {
       return {ok: true, output: `${call.path} (${lines.length} lines, showing ${start}-${end})\n${body}`};
     }
     if (call.tool === 'list') {
-      const target = confinedTarget(root, call.path || '.');
       const entries = fs.readdirSync(target, {withFileTypes: true});
       const shown = entries.slice(0, 200).map(e => `${e.isDirectory() ? '[dir] ' : '[file] '}${e.name}`);
       return {ok: true, output: `${call.path || '.'} (${entries.length} entries${entries.length > shown.length ? `, showing first ${shown.length}` : ''})\n${shown.join('\n')}`};
     }
     if (call.tool === 'write' || call.tool === 'edit') {
-      const target = confinedTarget(root, call.path);
-      let content, preview;
-      if (call.tool === 'write') {
-        content = call.content;
-        preview = `Write ${call.content.length} characters to ${call.path}:\n\n${call.content.slice(0, 2000)}`;
-      } else {
+      let content;
+      if (call.tool === 'write') content = call.content;
+      else {
         const current = fs.readFileSync(target, 'utf8');
         const first = current.indexOf(call.old);
         if (first === -1) return {ok: false, output: `edit: the old text was not found in ${call.path}.`};
         if (current.indexOf(call.old, first + 1) !== -1) return {ok: false, output: `edit: the old text occurs more than once in ${call.path}; include more surrounding context.`};
         content = current.slice(0, first) + call.new + current.slice(first + call.old.length);
-        preview = `Edit ${call.path}:\n\n--- before ---\n${call.old.slice(0, 1000)}\n--- after ---\n${call.new.slice(0, 1000)}`;
       }
-      if (approvalMode !== 'bypass') {
-        const allowed = await confirmAgentAction('Agent file change approval',
-          `The local agent (Muse) asked to change a file.\n\nWorkspace: ${root}\nApproval mode: ${approvalMode}\n\n${preview}`);
-        if (!allowed) return {ok: false, output: `User denied this ${call.tool}.`};
-      }
-      if (root !== workspace) return {ok: false, output: 'Workspace changed; file not changed.'};
       fs.mkdirSync(path.dirname(target), {recursive: true});
       fs.writeFileSync(target, content, 'utf8');
+      sendTools('tools:output', `[${call.tool}] ${target}\n`);
       return {ok: true, output: `${call.tool === 'write' ? 'Wrote' : 'Edited'} ${call.path} (${content.length} characters).`};
     }
     return {ok: false, output: `Unsupported tool: ${call.tool}`};
@@ -372,7 +320,6 @@ function createLocalBridge() {
   return {
     workspace: () => workspace,
     platform: () => process.platform,
-    approvalMode: () => approvalMode,
     isBusy: () => Boolean(active) || workflowRunning,
     report: (text) => sendTools('tools:output', text),
     agentStatus: (state) => sendTools('tools:agent-status', state),
@@ -405,7 +352,7 @@ app.whenReady().then(() => {
   ipcMain.handle('tools:get-info', (event) => {
     assertToolsSender(event);
     return {workspace, busy: Boolean(active) || workflowRunning,
-      platform: process.platform, approvalMode};
+      platform: process.platform};
   });
   ipcMain.handle('tools:select-workspace', async (event) => {
     assertToolsSender(event);
@@ -416,34 +363,8 @@ app.whenReady().then(() => {
     });
     if (!result.canceled && result.filePaths[0] && result.filePaths[0] !== workspace) {
       workspace = result.filePaths[0];
-      approvalMode = 'auto'; // Reset dangerous preferences for every new folder.
-      sendApprovalState();
     }
     return workspace;
-  });
-  ipcMain.handle('tools:set-approval-mode', async (event, mode) => {
-    assertToolsSender(event);
-    if (!MODES.includes(mode)) throw new Error('Invalid approval mode');
-    if (active || workflowRunning) throw new Error('Stop running commands before changing approval mode');
-    if (mode === approvalMode) return {mode: approvalMode};
-    const currentWorkspace = workspace;
-    const details = {
-      auto: 'Only exact, read-only allowlisted commands run without confirmation. Build/test and unknown commands ask first.',
-      important: 'Read-only commands, npm test/build/lint/typecheck and pytest run automatically. All other commands ask first. Project scripts can change files and run arbitrary code.',
-      bypass: 'ALL locally submitted shell commands run without further confirmation, including destructive commands. The workspace is NOT a security sandbox: commands can read/write files outside it. Muse website prompts are unaffected.',
-    };
-    const result = await dialog.showMessageBox(toolsWindow, {
-      type: 'warning', buttons: ['Cancel', `Enable ${mode}`],
-      defaultId: 0, cancelId: 0, noLink: true,
-      title: 'Change LOCAL command approval mode?',
-      message: `Switch to ${mode} for this app session?`,
-      detail: `Workspace: ${currentWorkspace}\n\n${details[mode]}\n\nThis setting applies ONLY to commands in the separate LOCAL tools window. It does not bypass Muse platform approvals or let the Muse webpage run shell commands.`,
-    });
-    if (result.response === 1 && workspace === currentWorkspace && !active && !workflowRunning) {
-      approvalMode = mode;
-    }
-    sendApprovalState();
-    return {mode: approvalMode};
   });
   ipcMain.handle('tools:run', async (event, command) => {
     assertToolsSender(event);
@@ -451,46 +372,14 @@ app.whenReady().then(() => {
     if (typeof command !== 'string' || command.length > 1500 || !command.trim()) {
       throw new Error('Command must be nonempty and no longer than 1500 characters');
     }
-    const mode = approvalMode;
-    const decision = evaluate(command, mode);
-    const currentWorkspace = workspace;
-    if (decision.prompt) {
-      const result = await dialog.showMessageBox(toolsWindow, {
-        type: 'warning', buttons: ['Cancel', 'Run locally'],
-        defaultId: 0, cancelId: 0, noLink: true,
-        title: 'Confirm local shell execution',
-        message: `This command requires approval in ${mode} mode`,
-        detail: `Working directory: ${currentWorkspace}\n\n${command}\n\n` +
-          'This directory is NOT a sandbox. Commands can access files outside it.',
-      });
-      if (result.response !== 1) return {started: false, autoApproved: false};
-    }
-    if (currentWorkspace !== workspace || mode !== approvalMode || active || workflowRunning) {
-      throw new Error('Workspace or approval mode changed; command not started');
-    }
-    executeLocal(command, decision.plan, !decision.prompt);
-    return {started: true, autoApproved: !decision.prompt};
+    executeLocal(command);
+    return {started: true};
   });
   ipcMain.handle('tools:run-workflow', async (event) => {
     assertToolsSender(event);
     if (active || workflowRunning) throw new Error('Another command or workflow is running');
     // Fixed, bounded steps. This is not an autonomous AI development loop.
     const steps = ['npm test', 'npm run build'];
-    const mode = approvalMode;
-    const currentWorkspace = workspace;
-    if (steps.some(step => evaluate(step, mode).prompt)) {
-      const result = await dialog.showMessageBox(toolsWindow, {
-        type: 'warning', buttons: ['Cancel', 'Run test & build'],
-        defaultId: 0, cancelId: 0, noLink: true,
-        title: 'Approve local workflow?',
-        message: 'Run npm test and npm run build in sequence?',
-        detail: 'Project scripts can run arbitrary code outside this workspace. Only use trusted projects.',
-      });
-      if (result.response !== 1) return {state: 'canceled'};
-    }
-    if (currentWorkspace !== workspace || mode !== approvalMode || active || workflowRunning) {
-      throw new Error('Workspace or approval mode changed; workflow not started');
-    }
     workflowRunning = true;
     stopWorkflow = false;
     sendTools('tools:workflow-status', {state: 'running'});
@@ -498,7 +387,7 @@ app.whenReady().then(() => {
     try {
       for (const step of steps) {
         if (stopWorkflow) { state = 'stopped'; break; }
-        const result = await executeLocal(step, getPlan(step), true);
+        const result = await executeLocal(step);
         if (stopWorkflow) { state = 'stopped'; break; }
         if (result.errored || result.code !== 0) { state = 'failed'; break; }
       }

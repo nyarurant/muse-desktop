@@ -12,17 +12,7 @@
   <section class="panel">
     <label class="section-title" for="folder">作業フォルダ</label>
     <div class="bar"><code id="folder">Loading...</code><button id="choose">フォルダ変更</button></div>
-    <p class="hint">ここは作業ディレクトリの指定です。OSレベルのファイル隔離はありません。</p>
-  </section>
-  <section class="panel">
-    <div class="section-title">承認モード <span class="muted">（ローカル実行のみ）</span></div>
-    <div class="modes" role="group" aria-label="ローカル承認モード">
-      <button data-mode="bypass" class="mode" aria-pressed="false"><strong>Bypass</strong><small>全コマンドを確認なしで実行</small><span>最も危険 / 明示的な切替が必要</span></button>
-      <button data-mode="auto" class="mode" aria-pressed="true"><strong>Auto</strong><small>読み取り系だけ自動承認</small><span>それ以外は確認</span></button>
-      <button data-mode="important" class="mode" aria-pressed="false"><strong>Only the important ones</strong><small>読み取り・ビルド・テストを自動承認</small><span>その他の操作は確認</span></button>
-    </div>
-    <p class="hint" id="mode-description">Auto: git status/diffなど、正確に一致する読み取りコマンドのみ自動承認。</p>
-    <p class="alert">この設定ではmuse.ai本体の許可確認はスキップされません。通常のチャット画面からローカルコマンドは実行できません。ローカル実行が起きるのは、この画面で手動実行した場合と、下のローカルエージェントを明示的に開始した場合だけです。</p>
+    <p class="hint">コマンドはこのフォルダで始まります。コマンドもファイル操作も確認なしで実行され、フォルダの外にも読み書きできます。</p>
   </section>
   <section class="panel">
     <div class="section-title">よく使うコマンド</div>
@@ -33,13 +23,13 @@
   </section>
   <section class="panel">
     <div class="section-title">ローカルエージェント <span class="muted">（Claude Code / Codex 風）</span></div>
-    <p class="hint">タスクを書くと、専用のサイドチャットで Muse が考え、上の承認モードに従ってこのフォルダでコマンド実行・ファイルの読み書きを繰り返します。ファイル操作は作業フォルダの外に出られません。コマンド実行はサンドボックスではありません。経過は下の実行ログと、通常のチャット一覧（サイドチャット）で見られます。</p>
+    <p class="hint">タスクを書くと、専用のサイドチャットで Muse が考え、確認なしでコマンド実行・ファイルの読み書きを繰り返します（作業フォルダの外も対象）。経過は下の実行ログと、通常のチャット一覧（サイドチャット）で見られます。</p>
     <label class="section-title" for="agent-task">タスク</label>
     <textarea id="agent-task" rows="3" spellcheck="false" placeholder="例: テストを通して。失敗していたら原因を直してもう一度実行して"></textarea>
     <div class="bar actions"><button id="agent-run" class="primary">▶ エージェント開始</button><button id="agent-stop" class="danger" disabled>■ 停止</button><span class="muted" id="agent-status">Idle</span></div>
   </section>
   <section class="panel output-panel"><div class="section-title">実行ログ</div><pre id="output" aria-live="polite">MuseのWeb画面からローカルコマンドは実行できません。\n</pre></section>
-  <footer>v0.2 • Community prototype — Meta非公式。承認モードは起動時・フォルダ変更時にAutoへ戻ります。</footer>
+  <footer>Community prototype — Meta非公式。</footer>
   <script src="tools.js"></script>
 </body>
 </html>

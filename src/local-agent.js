@@ -16,10 +16,9 @@ const path = require('node:path');
 // write {path,content}, edit {path,old,new}, done {summary?}.
 // Everything else in the reply is ordinary prose for the user. Tool
 // results are sent back as the next user message and the loop repeats,
-// bounded by MAX_STEPS and MAX_CALLS_PER_REPLY. File tools are confined
-// to the workspace (see resolveWorkspacePath); `run` is not confined —
-// it goes through the same approval policy as manual commands, exactly
-// like the tools window warns: the workspace is not a sandbox.
+// bounded by MAX_STEPS and MAX_CALLS_PER_REPLY. Nothing asks for
+// confirmation and nothing is confined: commands run in the workspace
+// folder, and file paths may be absolute or relative to it.
 
 const MAX_STEPS = 16;
 const MAX_CALLS_PER_REPLY = 4;
@@ -86,20 +85,13 @@ function validateCall(call) {
   return out;
 }
 
-// Lexically confine a workspace-relative path. Absolute paths, drive
-// letters and `..` escapes are rejected. (The executor additionally
-// checks the real path, so a symlink inside the workspace cannot be
-// used to escape it either.)
-function resolveWorkspacePath(workspace, rel) {
-  if (typeof rel !== 'string' || !rel.trim() || rel.includes('\0')) return null;
-  if (path.isAbsolute(rel) || /^[a-zA-Z]:/.test(rel) || rel.startsWith('\\\\')) return null;
-  const root = path.resolve(workspace);
-  const target = path.resolve(root, rel);
-  if (target !== root && !target.startsWith(root + path.sep)) return null;
-  return target;
+// Absolute paths are used as they are; relative paths start at the workspace.
+function resolveToolPath(workspace, p) {
+  if (typeof p !== 'string' || !p.trim() || p.includes('\0')) return null;
+  return path.resolve(path.resolve(workspace), p);
 }
 
-function buildTaskMessage({workspace, platform, approvalMode, task}) {
+function buildTaskMessage({workspace, platform, task}) {
   return [
     '[Local agent task — sent by the Muse App on the user\'s PC, not typed by the user]',
     'You can work in a local folder on the user\'s computer through tools provided by the app. To use a tool, put one JSON object per fenced block tagged local-tool in your reply, and nothing else in that block:',
@@ -117,14 +109,14 @@ function buildTaskMessage({workspace, platform, approvalMode, task}) {
     '- {"tool":"done","summary":"what you did"} — finish the task',
     '',
     'Rules:',
-    '- File paths are relative to the workspace; file tools cannot leave it. Commands run in the workspace folder but are not sandboxed.',
-    '- The user approves commands and file changes according to the current approval mode; a denied call comes back as a failed result — adapt instead of repeating it.',
+    '- Paths may be absolute or relative to the workspace. Commands start in the workspace folder.',
+    '- Calls run immediately without confirmation, so check before destructive commands. A failed call comes back as a failed result — adapt instead of repeating it.',
     `- At most ${MAX_CALLS_PER_REPLY} calls per reply and ${MAX_STEPS} rounds in total. Independent calls can be batched in one reply.`,
     '- After tool results come back, continue with the next calls, or finish with a done call (or a plain final answer with no tool calls).',
     '- Keep prose outside the blocks brief; the user watches the tool log live.',
     '',
     `Workspace: ${workspace}`,
-    `Platform: ${platform}; approval mode: ${approvalMode}`,
+    `Platform: ${platform}`,
     '',
     'Task from the user:',
     task,
@@ -179,6 +171,6 @@ async function runLoop({initialMessage, ask, execute, shouldStop = () => false, 
 
 module.exports = {
   MAX_STEPS, MAX_CALLS_PER_REPLY, MAX_COMMAND_LENGTH, RESULT_BUDGET, TOOLS,
-  extractToolCalls, validateCall, resolveWorkspacePath,
+  extractToolCalls, validateCall, resolveToolPath,
   buildTaskMessage, formatToolResults, truncate, runLoop,
 };

@@ -61,8 +61,7 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   }
   // ---- Local agent (Claude Code / Codex style) ----
   // The brain is Muse in a dedicated side chat; the local work goes
-  // through main.js's bridge, which applies the tools window's approval
-  // policy and workspace confinement. Replies are awaited via gateway
+  // through main.js's bridge (no confirmations, no folder limits). Replies are awaited via gateway
   // events, with a history poll as fallback (same message twice in a
   // row counts as settled).
   let agentRun=null;
@@ -104,7 +103,7 @@ function setupDesktop({getWindow,openTools,localBridge}) {
       await snapshot();
       return reply;
     };
-    const initial=buildTaskMessage({workspace:localBridge.workspace(),platform:localBridge.platform(),approvalMode:localBridge.approvalMode(),task});
+    const initial=buildTaskMessage({workspace:localBridge.workspace(),platform:localBridge.platform(),task});
     const result=await runAgentLoop({
       initialMessage:initial,ask,
       execute:async call=>{

@@ -4,7 +4,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('workspaceAPI', Object.freeze({
   info: () => ipcRenderer.invoke('tools:get-info'),
   chooseFolder: () => ipcRenderer.invoke('tools:select-workspace'),
-  setApprovalMode: (mode) => ipcRenderer.invoke('tools:set-approval-mode', mode),
   run: (command) => ipcRenderer.invoke('tools:run', command),
   runWorkflow: () => ipcRenderer.invoke('tools:run-workflow'),
   stop: () => ipcRenderer.invoke('tools:stop'),
@@ -19,11 +18,6 @@ contextBridge.exposeInMainWorld('workspaceAPI', Object.freeze({
     const listener = (_, status) => callback(status);
     ipcRenderer.on('tools:status', listener);
     return () => ipcRenderer.removeListener('tools:status', listener);
-  },
-  onApprovalState: (callback) => {
-    const listener = (_, value) => callback(value);
-    ipcRenderer.on('tools:approval-state', listener);
-    return () => ipcRenderer.removeListener('tools:approval-state', listener);
   },
   onAgentStatus: (callback) => {
     const listener = (_, value) => callback(value);

@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const {
-  extractToolCalls, validateCall, resolveWorkspacePath,
+  extractToolCalls, validateCall, resolveToolPath,
   buildTaskMessage, formatToolResults, runLoop,
 } = require('../src/local-agent');
 
@@ -34,18 +34,18 @@ test('validateCall normalizes good calls and names bad ones', () => {
   assert.match(validateCall({tool: 'read', path: 'a.js', start: 0}), /1 以上/);
 });
 
-test('file paths are confined to the workspace', () => {
+test('relative paths start at the workspace; absolute paths are used as given', () => {
   const ws = path.resolve('/work');
-  assert.equal(resolveWorkspacePath(ws, 'src/a.js'), path.join(ws, 'src', 'a.js'));
-  assert.equal(resolveWorkspacePath(ws, '.'), ws);
-  assert.equal(resolveWorkspacePath(ws, '../outside.txt'), null);
-  assert.equal(resolveWorkspacePath(ws, 'src/../../outside.txt'), null);
-  assert.equal(resolveWorkspacePath(ws, '/etc/passwd'), null);
-  assert.equal(resolveWorkspacePath(ws, ''), null);
+  assert.equal(resolveToolPath(ws, 'src/a.js'), path.join(ws, 'src', 'a.js'));
+  assert.equal(resolveToolPath(ws, '.'), ws);
+  assert.equal(resolveToolPath(ws, '../outside.txt'), path.resolve(ws, '..', 'outside.txt'));
+  assert.equal(resolveToolPath(ws, path.resolve('/etc/hosts')), path.resolve('/etc/hosts'));
+  assert.equal(resolveToolPath(ws, ''), null);
+  assert.equal(resolveToolPath(ws, 'a\0b'), null);
 });
 
 test('the task message explains the protocol and carries the task', () => {
-  const msg = buildTaskMessage({workspace: '/work', platform: 'win32', approvalMode: 'auto', task: 'テストを通して'});
+  const msg = buildTaskMessage({workspace: '/work', platform: 'win32', task: 'テストを通して'});
   assert.match(msg, /local-tool/);
   assert.match(msg, /テストを通して/);
   assert.match(msg, /Workspace: \/work/);
