@@ -120,3 +120,9 @@ test('calls beyond the per-reply cap are deferred with a note', async () => {
   assert.equal(h.executed.length, 4);
   assert.match(h.asked[1], /残りの 2 件/);
 });
+
+test('list with an empty path lists the workspace root', () => {
+  assert.deepEqual(validateCall({tool: 'list', path: ''}), {tool: 'list'});
+  assert.deepEqual(validateCall({tool: 'list'}), {tool: 'list'});
+  assert.match(validateCall({tool: 'read', path: ''}), /path/);
+});

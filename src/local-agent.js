@@ -55,6 +55,8 @@ function validateCall(call) {
     if (call.command.length > MAX_COMMAND_LENGTH) return `command が長すぎます（上限 ${MAX_COMMAND_LENGTH} 文字）。`;
     out.command = call.command;
   }
+  // An empty list path means the workspace root.
+  if (call.tool === 'list' && (call.path === undefined || call.path === '')) delete call.path;
   if (['read', 'write', 'edit'].includes(call.tool) || (call.tool === 'list' && call.path !== undefined)) {
     if (typeof call.path !== 'string' || !call.path.trim()) return `${call.tool} には path が必要です。`;
     if (call.path.length > MAX_PATH_LENGTH) return 'path が長すぎます。';

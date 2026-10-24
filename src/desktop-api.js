@@ -65,8 +65,9 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   // events, with a history poll as fallback (same message twice in a
   // row counts as settled).
   let agentRun=null;
-  // Muse may post progress messages before its final answer, so a reply counts as settled only
-  // once the side chat is no longer running (or its last message has not changed for 30 s).
+  // Muse streams its text and may post more than one message per turn, so a reply counts as
+  // settled only when its text is marked ready, it is unchanged over two polls, and the side chat
+  // is no longer running (or nothing has changed for 30 s).
   const BUSY=new Set(['running','pending','queued','in_progress','started','waiting_for_approval']);
   function waitAssistantReply(sessionId,baseline,timeoutMs=10*60*1000) {
     return new Promise((resolve,reject)=>{
@@ -77,9 +78,10 @@ function setupDesktop({getWindow,openTools,localBridge}) {
         if(checking)return;checking=true;
         try {
           const data=await client.history(sessionId);
-          const msgs=(data.chat_events||[]).map(messageFromEvent).filter(m=>m&&m.role==='assistant'&&m.content&&!baseline.has(m.id));
+          const events=(data.chat_events||[]).filter(ev=>ev.display_text_ready!==false);
+          const msgs=events.map(messageFromEvent).filter(m=>m&&m.role==='assistant'&&m.content&&!baseline.has(m.id));
           const latest=msgs[msgs.length-1];if(!latest)return;
-          if(!last||last.id!==latest.id||last.content!==latest.content){last=latest;since=Date.now();}
+          if(!last||last.id!==latest.id||last.content!==latest.content){last=latest;since=Date.now();return;}
           const detail=await client.request('GET','/api/session/list/'+encodeURIComponent(sessionId)).catch(()=>null);
           const status=String((detail?.session||detail)?.status||'').toLowerCase();
           if((status&&!BUSY.has(status))||Date.now()-since>=30000){cleanup();resolve(latest.content);}
