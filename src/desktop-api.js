@@ -3,9 +3,9 @@ const fs=require('node:fs');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {pathToFileURL}=require('node:url');
-const {app,BrowserWindow,ipcMain,dialog,safeStorage,session,shell}=require('electron');
+const {app,ipcMain,dialog,safeStorage,session,shell,WebContentsView}=require('electron');
 const MarkdownIt=require('markdown-it');
-const {MuseClient,captureCredentials}=require('./muse-client');
+const {MuseClient}=require('./muse-client');
 const {MODES:APPROVAL_MODES,decide:decideApproval}=require('./muse-approval-policy');
 const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=require('./auto-resume');
 const {createWatcher: createLoginWatcher,MESSAGES: LOGIN_MESSAGES,timeoutMessage: loginTimeoutMessage}=require('./login-flow');
@@ -17,20 +17,23 @@ function setupDesktop({getWindow,openTools}) {
   const pinsFile=path.join(dataDir,'gateway-pins.json');
   let pins={};try{pins=JSON.parse(fs.readFileSync(pinsFile,'utf8'));}catch{}
   let credentials=null;try{if(safeStorage.isEncryptionAvailable())credentials=JSON.parse(safeStorage.decryptString(fs.readFileSync(authFile)));}catch{}
+  if(credentials?.source!=='login')credentials=null; // captures (.har/.devtools) are no longer accepted; log in instead
   function saveCredentials(value) {
     if(!safeStorage.isEncryptionAvailable())throw new Error('Windows の暗号化ストレージを利用できません。');
     const temp=authFile+'.tmp';fs.writeFileSync(temp,safeStorage.encryptString(JSON.stringify(value)));fs.renameSync(temp,authFile);
   }
   function emit(type,value) {const w=getWindow();if(w&&!w.isDestroyed())w.webContents.send('muse:event',{type,...value});}
   async function fetchJson(route,body) {
-    const response=await session.defaultSession.fetch('https://muse.ai'+route,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','Origin':'https://muse.ai'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});
+    let response;
+    try{response=await session.defaultSession.fetch('https://muse.ai'+route,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','Origin':'https://muse.ai'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});}
+    catch{throw Object.assign(new Error('muse.ai に接続できません。'),{network:true});}
     if(!response.ok)throw new Error('Muse のログインが必要です。');return response.json();
   }
   // The VM's Noise key changes every time the VM restarts, and the web client does not pin it
   // (it trusts the authenticated gateway). Accept the new key like the web client, but keep a
   // record of every change and tell the user instead of failing silently or blocking.
   let keyChanged=false;
-  const client=new MuseClient({credentials,fetchJson,checkPin:(id,fingerprint)=>{
+  const client=new MuseClient({credentials,fetchJson,requireLogin:true,checkPin:(id,fingerprint)=>{
     if(pins[id]===fingerprint)return;
     if(pins[id]){
       keyChanged=true;
@@ -44,7 +47,7 @@ function setupDesktop({getWindow,openTools}) {
   client.on('status',value=>emit('connection',value));
   client.on('event',value=>emit('gateway',{event:value}));
   client.on('stream-error',message=>emit('stream-error',{message}));
-  let subscribed=false,loginWindow=null,sendInFlight=false;
+  let subscribed=false,sendInFlight=false;
   const draftSessions=new Set();
   const nodeIdFile=path.join(dataDir,'device-id');
   let nodeId;try{nodeId=fs.readFileSync(nodeIdFile,'utf8');}catch{nodeId='muse-desktop-'+crypto.randomUUID();fs.writeFileSync(nodeIdFile,nodeId);}
@@ -71,11 +74,6 @@ function setupDesktop({getWindow,openTools}) {
     if(status==='connected'){reconnectDelay=0;clearTimeout(reconnectTimer);reconnectTimer=null;}
     else if(status==='disconnected'||status==='error')scheduleReconnect();
   });
-  function importFile(file) {
-    const c=captureCredentials(file);client.disconnect();client.credentials=c;saveCredentials(c);return {imported:true};
-  }
-  const importArg=process.argv.find(a=>a.startsWith('--import-har='));
-  if(importArg)try{importFile(importArg.slice('--import-har='.length));}catch{ /* UI shows reconnect/import controls if invalid. */ }
   function assertSender(event) {
     const w=getWindow();
     if(!w||w.isDestroyed()||event.sender!==w.webContents||event.senderFrame!==w.webContents.mainFrame||event.senderFrame.url!==appUrl)throw new Error('Local Muse app only');
@@ -265,46 +263,56 @@ function setupDesktop({getWindow,openTools}) {
   handle('tools',()=>{openTools();return true;});
   handle('open-link',url=>{const u=new URL(url);if(!['https:','http:'].includes(u.protocol))throw new Error('このリンクは開けません。');return shell.openExternal(u.href);});
   handle('markdown',text=>{if(typeof text!=='string'||text.length>1000000)throw new Error('表示する文章が大きすぎます。');return markdown.render(text);});
-  handle('import',async()=>{const result=await dialog.showOpenDialog(getWindow(),{title:'Muse の通信記録を読み込む',filters:[{name:'DevTools / HAR',extensions:['devtools','har','json']}],properties:['openFile']});if(result.canceled)return {canceled:true};importFile(result.filePaths[0]);return connect();});
-  let loginWatcher=null;
+  // ---- Login (required) ----
+  // The muse.ai sign-in page is shown inside the main window, in the card of the app's own login
+  // screen (app.html #loginScreen). The renderer reports where the card is; Meta's page runs in a
+  // sandboxed view and the app never sees what is typed into it.
+  let loginView=null,loginWatcher=null,loginBounds=null,loginStage=null;
+  function applyLoginBounds() {
+    const w=getWindow();if(!loginView||!w||w.isDestroyed())return;
+    const r=loginBounds,z=w.webContents.getZoomFactor();
+    loginView.setBounds(r?{x:Math.round(r.x*z),y:Math.round(r.y*z),width:Math.round(r.width*z),height:Math.round(r.height*z)}:{x:0,y:0,width:0,height:0});
+  }
+  function closeLogin() {
+    loginWatcher?.stop();loginWatcher=null;loginStage=null;
+    if(loginView){const w=getWindow();if(w&&!w.isDestroyed())w.contentView.removeChildView(loginView);loginView.webContents.close();loginView=null;}
+  }
   function openLogin() {
-    // Re-showing the window also restarts a watcher that timed out, so a later sign-in is still noticed.
-    if(loginWindow&&!loginWindow.isDestroyed()){loginWindow.show();loginWindow.focus();if(loginWatcher&&!loginWatcher.running)loginWatcher.start();return true;}
-    loginWindow=new BrowserWindow({title:'Muse — ログイン',width:1060,height:780,parent:getWindow(),webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}});
-    loginWindow.webContents.setWindowOpenHandler(({url})=>{
+    const w=getWindow();if(!w||w.isDestroyed())return false;
+    emit('login-required',{stage:loginStage,message:LOGIN_MESSAGES[loginStage]||''});
+    if(loginView){if(!loginWatcher.running)loginWatcher.start();return true;}
+    loginView=new WebContentsView({webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}});
+    loginView.setBorderRadius?.(20);
+    loginView.webContents.setWindowOpenHandler(({url})=>{
       if(!url.startsWith('https://'))return {action:'deny'};
-      return {action:'allow',overrideBrowserWindowOptions:{webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}}};
+      return {action:'allow',overrideBrowserWindowOptions:{parent:getWindow(),webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}}};
     });
-    // Navigation events alone can miss a completed sign-in (popup-based
-    // auth, SPA transitions), so poll the login probe while the window is
-    // open and surface the stage it is stuck at. Events stay as a nudge
-    // to check immediately instead of waiting for the next poll.
+    w.contentView.addChildView(loginView);applyLoginBounds();
+    // Navigation events alone can miss a completed sign-in (popup-based auth, SPA transitions), so
+    // poll the login probe while the login screen is up; events only nudge an immediate check.
     const watcher=loginWatcher=createLoginWatcher({
       probe:()=>client.probeLogin(),
-      onStage:stage=>emit('login-stage',{stage,message:LOGIN_MESSAGES[stage]||''}),
+      onStage:stage=>{loginStage=stage;emit('login-stage',{stage,message:LOGIN_MESSAGES[stage]||''});},
       onReady:async()=>{
-        loginWindow?.close();
+        closeLogin();
         try {await connect();emit('authenticated',{});} catch { /* connect() already reported its status */ }
       },
       onTimeout:stage=>emit('login-stage',{stage:'timeout',message:loginTimeoutMessage(stage)}),
     });
     const nudge=()=>{if(!watcher.running)watcher.start();else void watcher.poll();};
-    loginWindow.webContents.on('did-finish-load',nudge);
-    loginWindow.webContents.on('did-navigate',nudge);
-    loginWindow.webContents.on('did-navigate-in-page',nudge);
-    loginWindow.on('closed',()=>{watcher.stop();loginWindow=null;loginWatcher=null;});
+    for(const name of ['did-finish-load','did-navigate','did-navigate-in-page'])loginView.webContents.on(name,nudge);
     watcher.start();
-    loginWindow.loadURL('https://muse.ai/');return true;
+    loginView.webContents.loadURL('https://muse.ai/');return true;
   }
   handle('login',openLogin);
-  // Login is required: a website session lets every (re)connect fetch a fresh token, where an
-  // imported capture's token eventually expires. Open the login window whenever it is missing.
+  handle('login-state',()=>({active:!!loginView,stage:loginStage,message:LOGIN_MESSAGES[loginStage]||''}));
+  handle('login-reload',()=>{loginView?.webContents.loadURL('https://muse.ai/');return !!loginView;});
+  handle('login-bounds',rect=>{
+    const ok=rect&&['x','y','width','height'].every(k=>Number.isFinite(rect[k])&&rect[k]>=0&&rect[k]<100000);
+    loginBounds=ok?{x:rect.x,y:rect.y,width:rect.width,height:rect.height}:null;applyLoginBounds();return true;
+  });
+  // A logged-out website session (or a rejected token) puts the whole app on the login screen.
   client.on('status',({status})=>{if(status==='auth_required')openLogin();});
-  async function ensureWebLogin() {
-    let stage;try{stage=await client.probeLogin();}catch{return;}
-    if(stage==='waiting')openLogin();
-  }
-  setTimeout(()=>{ensureWebLogin().catch(()=>{});},3000);
   app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);client.disconnect(false);});
   return {client,connect};
 }

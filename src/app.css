@@ -314,6 +314,29 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); }
 .media-grid button { aspect-ratio: 1; border-radius: 14px; overflow: hidden; background: var(--chip); padding: 0; }
 .media-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+/* Login screen (login is required; Meta's page is shown in .login-frame by the main process) */
+.login-mode .rail, .login-mode .sidebar, .login-mode .main, .login-mode .panel { display: none !important; }
+.login-screen { position: fixed; inset: 0; z-index: 40; display: flex; gap: 32px; padding: 32px; background: var(--bg); }
+.login-side { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.login-avatar { width: 88px; height: 88px; border-radius: 9999px; background: var(--chip); }
+.login-side h1 { margin: 8px 0 0; font-size: 28px; line-height: 36px; font-weight: 600; }
+.login-side p { margin: 0; color: var(--muted); font-size: 14px; line-height: 21px; }
+.login-steps { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.login-steps li { display: flex; align-items: center; gap: 10px; font-size: 14px; line-height: 20px; color: var(--muted); }
+.login-steps li::before { content: ''; width: 8px; height: 8px; border-radius: 9999px; border: 2px solid var(--line); flex-shrink: 0; }
+.login-steps li.done { color: var(--text); }
+.login-steps li.done::before { background: #4cd07d; border-color: #4cd07d; }
+.login-steps li.current { color: var(--text); }
+.login-steps li.current::before { border-color: var(--unread); animation: pulse 1.2s infinite; }
+.login-side .login-status { min-height: 21px; color: var(--text); }
+.login-side .pill-button { align-self: flex-start; }
+.login-frame { flex: 1; min-width: 0; border-radius: 20px; background: #fcfcfc; display: flex; align-items: center; justify-content: center; }
+@media (max-width: 860px) {
+  .login-screen { flex-direction: column; gap: 16px; padding: 16px; }
+  .login-side { width: auto; }
+  .login-frame { min-height: 420px; }
+}
+
 /* Visibility toggles */
 .sidebar-hidden .sidebar { margin-left: -240px; }
 .panel-hidden .panel { display: none; }

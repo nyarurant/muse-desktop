@@ -46,8 +46,10 @@ function errorDetail(body) {
   return typeof code==='string'&&code?' ('+code.replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80)+')':'';
 }
 class MuseClient extends EventEmitter {
-  constructor({credentials,fetchJson,checkPin}) {
-    super(); this.credentials=credentials; this.fetchJson=fetchJson; this.checkPin=checkPin;
+  // requireLogin: only connect with credentials obtained from the muse.ai login, and not at all
+  // while the website session is logged out.
+  constructor({credentials,fetchJson,checkPin,requireLogin=false}) {
+    super(); this.credentials=credentials; this.fetchJson=fetchJson; this.checkPin=checkPin; this.requireLogin=requireLogin;
     this.pending=new Map(); this.ws=null; this.transport=null; this.connecting=null; this.status='disconnected';
   }
   state(status,message) { this.status=status; this.emit('status',{status,message}); }
@@ -60,19 +62,20 @@ class MuseClient extends EventEmitter {
   async probeLogin() {
     if(!this.fetchJson) return 'error';
     let session;
-    try { session=await this.fetchJson('/api/session?vm_state=true'); } catch { return 'waiting'; }
+    // A network failure says nothing about the login; only an HTTP refusal means "not signed in".
+    try { session=await this.fetchJson('/api/session?vm_state=true'); } catch(e) { return e?.network?'error':'waiting'; }
     if(!session?.endpoint_url||!session?.vm_id) return 'session';
     try { allowedGateway(session.endpoint_url); } catch { return 'session'; }
     let result;
     try { result=await this.fetchJson('/api/hatch/token',{vmAddress:session.endpoint_url,vmName:session.vm_name,force_refresh:true}); } catch { return 'token'; }
     if(!result?.token) return 'token';
-    this.credentials={gateway:'https://hatch.metaaivm.com',vmId:session.vm_id,vmName:session.vm_name,endpoint:session.endpoint_url,appId:this.credentials?.appId||'hatch-web',token:result.token,notaryToken:result.notary_token};
+    this.credentials={gateway:'https://hatch.metaaivm.com',vmId:session.vm_id,vmName:session.vm_name,endpoint:session.endpoint_url,appId:this.credentials?.appId||'hatch-web',token:result.token,notaryToken:result.notary_token,source:'login'};
     this.emit('credentials',this.credentials);
     return 'ready';
   }
   async refreshCredentials() {
-    // Best effort only: an imported session may work without website cookies.
-    try { await this.probeLogin(); } catch { /* keep the stored credentials */ }
+    // Best effort: on a network failure the last login-derived credentials are kept.
+    try { return await this.probeLogin(); } catch { return 'error'; }
   }
   async connect() {
     if(this.status==='connected') return;
@@ -81,7 +84,10 @@ class MuseClient extends EventEmitter {
   }
   async open() {
     this.disconnect(false); this.state('connecting','Muse に接続しています…');
-    await this.refreshCredentials();
+    const stage=await this.refreshCredentials();
+    if(this.requireLogin&&(stage==='waiting'||this.credentials?.source!=='login')) {
+      this.state('auth_required','Muse にログインしてください。');throw new Error('Muse にログインしてください。');
+    }
     const c=this.credentials;
     if(!c?.token) { this.state('auth_required','ログインまたは通信記録の読み込みが必要です。'); throw new Error('Muse にログインしてください。'); }
     const target=allowedGateway(c.gateway); target.protocol='wss:';target.pathname='/v1/noise';target.search='';

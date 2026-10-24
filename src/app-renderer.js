@@ -520,15 +520,42 @@ function gateway(event){
 }
 window.muse.onEvent(value=>{
   if(value.type==='connection')setConnection(value.status,value.message);
-  else if(value.type==='login-stage'){if(value.message)notice(value.message);}
+  else if(value.type==='login-required')enterLogin(value.stage,value.message);
+  else if(value.type==='login-stage'){if(document.body.classList.contains('login-mode'))setLoginStage(value.stage,value.message);else if(value.message)notice(value.message);}
   else if(value.type==='gateway')gateway(value.event);
-  else if(value.type==='authenticated')safely(connect)();
+  else if(value.type==='authenticated'){exitLogin();safely(connect)();}
   else if(value.type==='stream-error')notice(value.message);
   else if(value.type==='approval-auto'){state.autoApproved.add(value.id);state.approvals=state.approvals.filter(a=>a.approval_id!==value.id);renderApprovals();}
   else if(value.type==='auto-resume'){notice('止まっていた「'+(value.title||'会話')+'」に再開を指示しました。');refreshSessions().catch(()=>{});if(value.id===state.selected)scheduleHistory();}
   else if(value.type==='reconnected')safely(async()=>{notice(value.keyChanged?KEY_CHANGED:'Muse に再接続しました。');await afterConnect();})();
   else if(value.type==='home')safely(()=>select(''))();
 });
+// ---- Login screen (login is required; the main process places Meta's page over #loginFrame) ----
+const LOGIN_STEPS=['waiting','session','token','ready'];
+let loginObserver=null;
+function sendLoginBounds(){
+  if(!document.body.classList.contains('login-mode'))return;
+  const r=$('loginFrame').getBoundingClientRect();call('loginBounds',{x:r.left,y:r.top,width:r.width,height:r.height}).catch(()=>{});
+}
+function enterLogin(stage,message){
+  document.body.classList.add('login-mode');$('loginScreen').hidden=false;closeMenu();
+  for(const d of document.querySelectorAll('dialog[open]'))d.close();
+  setLoginStage(stage||'waiting',message||'右の Meta のページで Muse にログインしてください。完了すると自動でつながります。');
+  if(!loginObserver){loginObserver=new ResizeObserver(sendLoginBounds);loginObserver.observe($('loginFrame'));}
+  requestAnimationFrame(sendLoginBounds);
+}
+function exitLogin(){
+  if(!document.body.classList.contains('login-mode'))return;
+  document.body.classList.remove('login-mode');$('loginScreen').hidden=true;
+  loginObserver?.disconnect();loginObserver=null;call('loginBounds',null).catch(()=>{});
+}
+function setLoginStage(stage,message){
+  const at=LOGIN_STEPS.indexOf(stage);
+  if(at>=0)for(const li of $('loginSteps').children){const i=LOGIN_STEPS.indexOf(li.dataset.stage);li.classList.toggle('done',i<at);li.classList.toggle('current',i===at);}
+  if(message)$('loginStatus').textContent=message;
+}
+window.addEventListener('resize',sendLoginBounds);
+$('loginReload').addEventListener('click',safely(()=>call('loginReload')));
 async function connect(){
   if(state.connecting)return;
   $('notice').hidden=true;
@@ -641,7 +668,6 @@ $('connect').addEventListener('click',safely(async()=>{if(state.connected)$('set
 $('welcomeConnect').addEventListener('click',safely(connect));
 for(const id of ['login','welcomeLogin'])$(id).addEventListener('click',safely(()=>call('login')));
 $('reconnect').addEventListener('click',safely(async()=>{$('settingsDialog').close();await connect();}));
-$('importCapture').addEventListener('click',safely(async()=>{const result=await call('importCapture');if(!result.canceled){$('settingsDialog').close();await connect();}}));
 $('refresh').addEventListener('click',safely(async()=>{await refreshSessions();await loadHistory();loadActivity().catch(()=>{});}));
 $('loadMore').addEventListener('click',safely(()=>loadHistory(true)));
 $('search').addEventListener('input',()=>{renderSessions();scheduleSearch();});
@@ -677,4 +703,4 @@ safely(async()=>{$('approvalMode').value=await call('approvalMode');})();
 $('autoResume').addEventListener('change',safely(async e=>{const el=e.target;el.value=await call('setAutoResume',el.value==='on')?'on':'off';}));
 safely(async()=>{$('autoResume').value=await call('autoResume')?'on':'off';})();
 renderApprovals();
-safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);if(info.hasSession)await connect();else await call('login');})();
+safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);const login=await call('loginState');if(login.active)enterLogin(login.stage,login.message);else if(info.hasSession)await connect();else await call('login');})();
