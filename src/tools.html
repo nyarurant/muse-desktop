@@ -22,7 +22,7 @@
       <button data-mode="important" class="mode" aria-pressed="false"><strong>Only the important ones</strong><small>読み取り・ビルド・テストを自動承認</small><span>その他の操作は確認</span></button>
     </div>
     <p class="hint" id="mode-description">Auto: git status/diffなど、正確に一致する読み取りコマンドのみ自動承認。</p>
-    <p class="alert">この設定ではmuse.ai本体の許可確認はスキップされません。Web上のMuseにはローカルシェルの権限を与えていません。</p>
+    <p class="alert">この設定ではmuse.ai本体の許可確認はスキップされません。通常のチャット画面からローカルコマンドは実行できません。ローカル実行が起きるのは、この画面で手動実行した場合と、下のローカルエージェントを明示的に開始した場合だけです。</p>
   </section>
   <section class="panel">
     <div class="section-title">よく使うコマンド</div>
@@ -30,6 +30,13 @@
     <label class="section-title" for="command">ローカルコマンド</label>
     <textarea id="command" rows="3" spellcheck="false" placeholder="例: npm test"></textarea>
     <div class="bar actions"><button id="run" class="primary">▶ 実行</button><button id="workflow">▷ テスト → ビルド</button><button id="stop" class="danger" disabled>■ 停止</button><button id="clear">ログ消去</button></div>
+  </section>
+  <section class="panel">
+    <div class="section-title">ローカルエージェント <span class="muted">（Claude Code / Codex 風）</span></div>
+    <p class="hint">タスクを書くと、専用のサイドチャットで Muse が考え、上の承認モードに従ってこのフォルダでコマンド実行・ファイルの読み書きを繰り返します。ファイル操作は作業フォルダの外に出られません。コマンド実行はサンドボックスではありません。経過は下の実行ログと、通常のチャット一覧（サイドチャット）で見られます。</p>
+    <label class="section-title" for="agent-task">タスク</label>
+    <textarea id="agent-task" rows="3" spellcheck="false" placeholder="例: テストを通して。失敗していたら原因を直してもう一度実行して"></textarea>
+    <div class="bar actions"><button id="agent-run" class="primary">▶ エージェント開始</button><button id="agent-stop" class="danger" disabled>■ 停止</button><span class="muted" id="agent-status">Idle</span></div>
   </section>
   <section class="panel output-panel"><div class="section-title">実行ログ</div><pre id="output" aria-live="polite">MuseのWeb画面からローカルコマンドは実行できません。\n</pre></section>
   <footer>v0.2 • Community prototype — Meta非公式。承認モードは起動時・フォルダ変更時にAutoへ戻ります。</footer>

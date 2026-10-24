@@ -9,9 +9,11 @@ const {MuseClient}=require('./muse-client');
 const {MODES:APPROVAL_MODES,decide:decideApproval}=require('./muse-approval-policy');
 const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=require('./auto-resume');
 const {createWatcher: createLoginWatcher,MESSAGES: LOGIN_MESSAGES,timeoutMessage: loginTimeoutMessage}=require('./login-flow');
+const {runLoop: runAgentLoop,buildTaskMessage}=require('./local-agent');
+const {messageFromEvent}=require('./chat-model');
 const markdown=new MarkdownIt({html:false,linkify:true,breaks:true});
 const appUrl=pathToFileURL(path.join(__dirname,'app.html')).href;
-function setupDesktop({getWindow,openTools}) {
+function setupDesktop({getWindow,openTools,localBridge}) {
   const dataDir=app.getPath('userData');fs.mkdirSync(dataDir,{recursive:true});
   const authFile=path.join(dataDir,'muse-session.enc');
   const pinsFile=path.join(dataDir,'gateway-pins.json');
@@ -56,6 +58,88 @@ function setupDesktop({getWindow,openTools}) {
     await client.connect();if(!subscribed){await client.subscribe();subscribed=true;}
     const changed=keyChanged;keyChanged=false;
     return {status:client.status,keyChanged:changed};
+  }
+  // ---- Local agent (Claude Code / Codex style) ----
+  // The brain is Muse in a dedicated side chat; the local work goes
+  // through main.js's bridge, which applies the tools window's approval
+  // policy and workspace confinement. Replies are awaited via gateway
+  // events, with a history poll as fallback (same message twice in a
+  // row counts as settled).
+  let agentRun=null;
+  // Muse may post progress messages before its final answer, so a reply counts as settled only
+  // once the side chat is no longer running (or its last message has not changed for 30 s).
+  const BUSY=new Set(['running','pending','queued','in_progress','started','waiting_for_approval']);
+  function waitAssistantReply(sessionId,baseline,timeoutMs=10*60*1000) {
+    return new Promise((resolve,reject)=>{
+      let last=null,since=0,checking=false;
+      const cleanup=()=>{clearTimeout(timer);clearInterval(poll);client.off('event',onEvent);};
+      const timer=setTimeout(()=>{cleanup();reject(new Error('Muse の応答がタイムアウトしました。'));},timeoutMs);
+      const check=async()=>{
+        if(checking)return;checking=true;
+        try {
+          const data=await client.history(sessionId);
+          const msgs=(data.chat_events||[]).map(messageFromEvent).filter(m=>m&&m.role==='assistant'&&m.content&&!baseline.has(m.id));
+          const latest=msgs[msgs.length-1];if(!latest)return;
+          if(!last||last.id!==latest.id||last.content!==latest.content){last=latest;since=Date.now();}
+          const detail=await client.request('GET','/api/session/list/'+encodeURIComponent(sessionId)).catch(()=>null);
+          const status=String((detail?.session||detail)?.status||'').toLowerCase();
+          if((status&&!BUSY.has(status))||Date.now()-since>=30000){cleanup();resolve(latest.content);}
+        } catch { /* the thread may not exist until the first send lands */ }
+        finally{checking=false;}
+      };
+      const onEvent=value=>{const p=value?.payload||{};if((p.session_id||value?.session_id)===sessionId)void check();};
+      client.on('event',onEvent);
+      const poll=setInterval(()=>{void check();},3000);
+      poll.unref?.();
+    });
+  }
+  async function runAgentTask(run,task) {
+    const baseline=new Set();
+    const snapshot=async()=>{try{const data=await client.history(run.sessionId);for(const ev of data.chat_events||[]){const m=messageFromEvent(ev);if(m)baseline.add(m.id);}}catch{}};
+    await snapshot();
+    const ask=async text=>{
+      const waiting=waitAssistantReply(run.sessionId,baseline);
+      await client.send(text,run.sessionId,nodeId);
+      const reply=await waiting;
+      await snapshot();
+      return reply;
+    };
+    const initial=buildTaskMessage({workspace:localBridge.workspace(),platform:localBridge.platform(),approvalMode:localBridge.approvalMode(),task});
+    const result=await runAgentLoop({
+      initialMessage:initial,ask,
+      execute:async call=>{
+        localBridge.report(`\n[Agent tool] ${call.tool}${call.command?' '+call.command:''}${call.path?' '+call.path:''}\n`);
+        const r=await localBridge.executeCall(call);
+        localBridge.report(`[${r.ok?'ok':'failed'}] ${String(r.output).slice(0,500)}\n`);
+        return r;
+      },
+      shouldStop:()=>run.stopped,
+      onStep:({step})=>localBridge.report(`\n[Agent step ${step} done]\n`),
+    });
+    localBridge.report(`\n[Agent ${result.status}] ${result.steps} step(s)\n${result.finalText||''}\n`);
+    emit('agent-done',{status:result.status,sessionId:run.sessionId});
+    return result;
+  }
+  function startAgent(task) {
+    if(typeof task!=='string'||!task.trim()||task.length>20000)throw new Error('タスクを入力してください（上限 20,000 文字）。');
+    if(agentRun)throw new Error('エージェントは既に実行中です。');
+    if(!localBridge)throw new Error('ローカルブリッジが利用できません。');
+    if(client.status!=='connected')throw new Error('Muse に接続してからエージェントを開始してください。');
+    const run={sessionId:crypto.randomUUID(),stopped:false};
+    agentRun=run;
+    localBridge.agentStatus({state:'running'});
+    localBridge.report(`\n[Agent started] session ${run.sessionId}\nTask: ${task.trim()}\n`);
+    runAgentTask(run,task.trim())
+      .catch(e=>localBridge.report(`\n[Agent error] ${e.message}\n`))
+      .finally(()=>{if(agentRun===run)agentRun=null;localBridge.agentStatus({state:'idle'});});
+    return {started:true,sessionId:run.sessionId};
+  }
+  function stopAgent() {
+    if(!agentRun)return false;
+    agentRun.stopped=true;
+    userCancels[agentRun.sessionId]=Date.now(); // a stopped agent must not be auto-resumed
+    client.cancel(agentRun.sessionId).catch(()=>{});
+    return true;
   }
   // Reconnect by itself after the connection drops (e.g. the VM restarted), so auto-approval and
   // auto-resume keep working. Stops when sign-in is needed; backs off 3 s -> 60 s.
@@ -314,6 +398,6 @@ function setupDesktop({getWindow,openTools}) {
   // A logged-out website session (or a rejected token) puts the whole app on the login screen.
   client.on('status',({status})=>{if(status==='auth_required')openLogin();});
   app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);client.disconnect(false);});
-  return {client,connect};
+  return {client,connect,startAgent,stopAgent};
 }
 module.exports={setupDesktop};

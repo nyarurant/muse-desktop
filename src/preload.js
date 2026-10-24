@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('workspaceAPI', Object.freeze({
   run: (command) => ipcRenderer.invoke('tools:run', command),
   runWorkflow: () => ipcRenderer.invoke('tools:run-workflow'),
   stop: () => ipcRenderer.invoke('tools:stop'),
+  agentStart: (task) => ipcRenderer.invoke('tools:agent-start', task),
+  agentStop: () => ipcRenderer.invoke('tools:agent-stop'),
   onOutput: (callback) => {
     const listener = (_, output) => callback(output);
     ipcRenderer.on('tools:output', listener);
@@ -22,6 +24,11 @@ contextBridge.exposeInMainWorld('workspaceAPI', Object.freeze({
     const listener = (_, value) => callback(value);
     ipcRenderer.on('tools:approval-state', listener);
     return () => ipcRenderer.removeListener('tools:approval-state', listener);
+  },
+  onAgentStatus: (callback) => {
+    const listener = (_, value) => callback(value);
+    ipcRenderer.on('tools:agent-status', listener);
+    return () => ipcRenderer.removeListener('tools:agent-status', listener);
   },
   onWorkflowStatus: (callback) => {
     const listener = (_, value) => callback(value);
