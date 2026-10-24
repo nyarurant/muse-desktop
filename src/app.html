@@ -23,6 +23,19 @@
     <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.4 2.4 4.6-4.8"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M13.5 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5l-5-5Z"/><path d="M13.5 3.5v5h5"/></symbol>
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5c.6 4.4 2.1 5.9 6.5 6.5-4.4.6-5.9 2.1-6.5 6.5-.6-4.4-2.1-5.9-6.5-6.5 4.4-.6 5.9-2.1 6.5-6.5Z"/><path d="M18.5 15.5c.25 1.8.7 2.25 2.5 2.5-1.8.25-2.25.7-2.5 2.5-.25-1.8-.7-2.25-2.5-2.5 1.8-.25 2.25-.7 2.5-2.5Z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.1"/><circle cx="12" cy="12" r="1.1"/><circle cx="18" cy="12" r="1.1"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.75 14c.8 1.2 1.9 1.8 3.25 1.8s2.45-.6 3.25-1.8"/><circle cx="9.25" cy="10" r=".6"/><circle cx="14.75" cy="10" r=".6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M14.5 4.5 19.5 9.5l-2.5 1-3.5 3.5-.5 3.5-7-7 3.5-.5L13 6.5l1.5-2Z"/><path d="m8.5 15.5-4 4"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4.5 19.5h4l10-10a2.83 2.83 0 0 0-4-4l-10 10v4Z"/><path d="m13.5 6.5 4 4"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="4" rx="1.5"/><path d="M5 8.5v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9M10 12.5h4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7M6.5 7l.8 11.2a1.5 1.5 0 0 0 1.5 1.3h6.4a1.5 1.5 0 0 0 1.5-1.3L17.5 7"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.5 7.5 5 12l4.5 4.5"/><path d="M5.5 12h8a5.5 5.5 0 0 1 5.5 5.5V19"/></symbol>
+    <symbol id="i-feed" viewBox="0 0 24 24"><rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 17.5h6M10 20.5h4M12 3.5a6 6 0 0 0-3.5 10.9c.6.45 1 1.15 1 1.9v1.2h5v-1.2c0-.75.4-1.45 1-1.9A6 6 0 0 0 12 3.5Z"/></symbol>
+    <symbol id="i-goal" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/><path d="m8.5 12.2 2.4 2.4 4.6-4.8"/></symbol>
+    <symbol id="i-library" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="5" height="15" rx="1.5"/><rect x="11.5" y="4.5" width="4" height="15" rx="1.5"/><path d="m17 6 2.6-.7 2 13.5-2.6.7Z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4.5v11m-4.5-4.5L12 15.5l4.5-4.5M5 19.5h14"/></symbol>
   </defs></svg>
 
   <nav class="rail" aria-label="メニュー">
@@ -30,6 +43,10 @@
     <div class="rail-middle">
       <button class="rail-button active" id="railChat" title="チャット" aria-label="チャット" aria-current="page"><span class="rail-icon"><svg><use href="#i-chat"/></svg></span></button>
       <button class="rail-button" id="railSearch" title="検索" aria-label="検索"><span class="rail-icon"><svg><use href="#i-search"/></svg></span></button>
+      <button class="rail-button" id="railFeed" data-page="feed" title="フィード" aria-label="フィード"><span class="rail-icon"><svg><use href="#i-feed"/></svg></span></button>
+      <button class="rail-button" id="railIdeas" data-page="ideas" title="アイデア" aria-label="アイデア"><span class="rail-icon"><svg><use href="#i-bulb"/></svg></span></button>
+      <button class="rail-button" id="railGoals" data-page="goals" title="目標" aria-label="目標"><span class="rail-icon"><svg><use href="#i-goal"/></svg></span></button>
+      <button class="rail-button" id="railLibrary" data-page="library" title="ライブラリ" aria-label="ライブラリ"><span class="rail-icon"><svg><use href="#i-library"/></svg></span></button>
       <button class="rail-button" id="tools" title="ローカル作業" aria-label="ローカル作業"><span class="rail-icon"><svg><use href="#i-terminal"/></svg></span></button>
     </div>
     <div class="rail-bottom"><button class="rail-button" id="settings" title="接続と設定" aria-label="接続と設定"><span class="rail-icon"><svg><use href="#i-menu"/></svg></span></button></div>
@@ -38,12 +55,14 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-top">
       <label class="search"><svg><use href="#i-search"/></svg><input id="search" placeholder="検索" aria-label="会話を検索"></label>
-      <button class="icon-button muted" id="collapseSidebar" title="会話一覧を閉じる" aria-label="会話一覧を閉じる"><svg><use href="#i-panel"/></svg></button>
+      <button class="icon-button muted" id="sidebarOptions" title="サイドチャットオプション" aria-label="サイドチャットオプション"><svg><use href="#i-more"/></svg></button><button class="icon-button muted" id="collapseSidebar" title="会話一覧を閉じる" aria-label="会話一覧を閉じる"><svg><use href="#i-panel"/></svg></button>
     </div>
     <div class="sidebar-scroll">
       <div id="primarySession"></div>
       <div class="section-header"><span>サイドチャット</span><button class="icon-button small muted" id="newChat" title="新しいサイドチャット (Ctrl+N)" aria-label="新しいサイドチャット"><svg><use href="#i-plus"/></svg></button></div>
       <nav class="session-list" id="sessions" aria-label="サイドチャット"><p class="list-hint">接続すると会話が表示されます。</p></nav>
+      <div id="archivedSection" hidden><div class="section-header"><span>アーカイブ済み</span></div><nav class="session-list" id="archivedSessions" aria-label="アーカイブ済みのチャット"></nav></div>
+      <div id="searchSection" hidden><div class="section-header"><span>メッセージ</span></div><div class="search-results" id="searchResults"></div></div>
     </div>
   </aside>
 
@@ -54,6 +73,7 @@
       <button class="icon-button muted" id="panelToggle" title="パネルを開く" aria-label="パネルを開く" hidden><svg><use href="#i-panel-right"/></svg></button>
     </div>
     <div class="notice" id="notice" role="status" aria-live="polite" hidden><span id="noticeText"></span><button id="dismissNotice" class="icon-button small" aria-label="通知を閉じる"><svg><use href="#i-close"/></svg></button></div>
+    <section class="page-view" id="pageView" hidden><div class="page-column"><div class="page-heading"><h1 id="pageTitle"></h1><div class="page-tabs" id="pageTabs"></div></div><div id="pageBody"></div></div></section>
     <section class="transcript" id="transcript" aria-label="会話履歴" tabindex="0">
       <div class="column">
         <button class="load-more" id="loadMore" hidden>以前のメッセージを読み込む</button>
@@ -64,7 +84,11 @@
     </section>
     <div class="composer-area">
       <section id="approvals" class="approvals" aria-label="確認待ちの操作" hidden></section>
+      <div class="reply-bar" id="replyBar" hidden><svg><use href="#i-reply"/></svg><span id="replyText"></span><button type="button" class="icon-button small muted" id="cancelReply" title="返信をやめる" aria-label="返信をやめる"><svg><use href="#i-close"/></svg></button></div>
+      <div class="attachments" id="attachmentList" hidden></div>
       <form id="composerForm" class="composer">
+        <button type="button" class="round-button attach-button" id="attach" title="ファイルを添付" aria-label="ファイルを添付"><svg><use href="#i-plus"/></svg></button>
+        <input type="file" id="fileInput" multiple hidden>
         <label class="sr-only" for="prompt">メッセージ</label>
         <textarea id="prompt" rows="1" placeholder="メッセージ" maxlength="100000"></textarea>
         <button id="stop" type="button" class="round-button stop-button" hidden title="停止" aria-label="停止"><span class="stop-square"></span></button>
@@ -83,14 +107,17 @@
     <div class="tabs" role="tablist" aria-label="パネル">
       <button class="tab active" id="tabActivity" role="tab" aria-selected="true" title="アクティビティ" aria-label="アクティビティ"><svg><use href="#i-list"/></svg></button>
       <button class="tab" id="tabApprovals" role="tab" aria-selected="false" title="承認" aria-label="承認"><svg><use href="#i-shield"/></svg><span class="tab-badge" id="approvalBadge" hidden></span></button>
+      <button class="tab" id="tabUpcoming" role="tab" aria-selected="false" title="近日開催予定" aria-label="近日開催予定"><svg><use href="#i-clock"/></svg></button>
     </div>
     <div class="panel-scroll">
       <div id="activityList" class="activity-list"><p class="list-hint">接続するとアクティビティが表示されます。</p></div>
       <div id="panelApprovals" class="panel-approvals" hidden></div>
+      <div id="upcomingList" class="activity-list" hidden></div>
     </div>
   </aside>
 
-  <dialog id="settingsDialog"><div class="dialog-heading"><h2>接続と設定</h2><button class="icon-button muted" id="closeSettings" aria-label="設定を閉じる"><svg><use href="#i-close"/></svg></button></div><p class="dialog-description">Muse アカウントでログインして接続します。</p><div class="setting-row"><div><strong>Muse アカウント</strong><p>ログイン用のウィンドウを開きます。</p></div><button class="pill-button" id="login">ログイン</button></div><div class="setting-row"><div><strong>通信記録から接続</strong><p>既存の .devtools / .har を読み込みます。</p></div><button class="pill-button" id="importCapture">読み込む</button></div><div class="setting-row"><div><strong>接続を更新</strong><p>認証と会話一覧を再取得します。</p></div><button class="pill-button" id="reconnect">再接続</button></div><div class="setting-row"><div><strong>外観</strong><p>Web 版の Muse と同じダーク表示が既定です。</p></div><select id="themeMode" aria-label="外観"><option value="dark">ダーク</option><option value="light">ライト</option><option value="system">システムに合わせる</option></select></div><div class="dialog-note">接続情報は Windows の暗号化ストレージに保存します。通信記録そのものはコピーしません。</div><div class="dialog-footer"><span>Muse App · Community</span><span id="dialogVersion"></span></div></dialog>
+  <dialog id="settingsDialog"><div class="dialog-heading"><h2>接続と設定</h2><button class="icon-button muted" id="closeSettings" aria-label="設定を閉じる"><svg><use href="#i-close"/></svg></button></div><p class="dialog-description">Muse アカウントでログインして接続します。</p><div class="setting-row"><div><strong>Muse アカウント</strong><p>ログイン用のウィンドウを開きます。</p></div><button class="pill-button" id="login">ログイン</button></div><div class="setting-row"><div><strong>通信記録から接続</strong><p>既存の .devtools / .har を読み込みます。</p></div><button class="pill-button" id="importCapture">読み込む</button></div><div class="setting-row"><div><strong>接続を更新</strong><p>認証と会話一覧を再取得します。</p></div><button class="pill-button" id="reconnect">再接続</button></div><div class="setting-row"><div><strong>外観</strong><p>Web 版の Muse と同じダーク表示が既定です。</p></div><select id="themeMode" aria-label="外観"><option value="dark">ダーク</option><option value="light">ライト</option><option value="system">システムに合わせる</option></select></div><div class="setting-row"><div><strong>承認の自動化</strong><p>Muse の「今回許可」を自動で押します。</p></div><select id="approvalMode" aria-label="承認の自動化"><option value="manual">手動（毎回確認）</option><option value="auto">自動（Web アクセスなど安全なもの）</option><option value="important">重要なものだけ確認</option><option value="bypass">Bypass（すべて許可）</option></select></div><div class="setting-row"><div><strong>止まったら自動で再開</strong><p>作業が途中で止まったら、30 秒後に再開を指示します（自分で停止したときは除く）。</p></div><select id="autoResume" aria-label="止まったら自動で再開"><option value="on">オン</option><option value="off">オフ</option></select></div><div class="dialog-note">接続情報は Windows の暗号化ストレージに保存します。通信記録そのものはコピーしません。</div><div class="dialog-footer"><span>Muse App · Community</span><span id="dialogVersion"></span></div></dialog>
+  <dialog id="askDialog"><form method="dialog"><div class="dialog-heading"><h2 id="askTitle"></h2></div><p class="dialog-description" id="askText"></p><input id="askInput" class="dialog-input" maxlength="200" autocomplete="off" hidden><div class="dialog-actions"><button class="pill-button" value="cancel" formnovalidate>キャンセル</button><button class="primary-button" id="askOk" value="ok">OK</button></div></form></dialog>
   <script src="chat-model.js"></script><script src="app-renderer.js"></script>
 </body>
 </html>

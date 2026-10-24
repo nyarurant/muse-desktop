@@ -39,6 +39,12 @@ function unwrap(value) {
   if(value?.type==='res' && value.status==='ok') return value.payload;
   return value;
 }
+// Same rule as unwrap(): surface only a short error code from an HTTP error body.
+function errorDetail(body) {
+  let v;try{v=JSON.parse(body.toString('utf8'));}catch{return '';}
+  const code=v?.error?.code||v?.code||(typeof v?.error==='string'?v.error:'');
+  return typeof code==='string'&&code?' ('+code.replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80)+')':'';
+}
 class MuseClient extends EventEmitter {
   constructor({credentials,fetchJson,checkPin}) {
     super(); this.credentials=credentials; this.fetchJson=fetchJson; this.checkPin=checkPin;
@@ -105,8 +111,8 @@ class MuseClient extends EventEmitter {
     if(this.pending.size>=64) return Promise.reject(new Error('処理中の操作が多すぎます。'));
     let body=Buffer.alloc(0);
     if(verb==='GET') {const q=new URLSearchParams();for(const[k,v]of Object.entries(params))if(Array.isArray(v))for(const x of v)q.append(k,String(x));else if(v!==undefined&&v!==null)q.set(k,String(v));if(q.size)path+='?'+q;}
-    else body=Buffer.from(JSON.stringify(params));
-    const r=this.transport.request(verb,path,body,[['x-app-id',this.credentials.appId],['Content-Type','application/json'],['Accept-Encoding','identity']],options.service||0);
+    else body=Buffer.isBuffer(options.body)?options.body:Buffer.from(JSON.stringify(params));
+    const r=this.transport.request(verb,path,body,[['x-app-id',this.credentials.appId],['Content-Type',options.contentType||'application/json'],['Accept-Encoding','identity']],options.service||0);
     return new Promise((resolve,reject)=>{
       const pending={resolve,reject,path,status:0,chunks:[],size:0,text:'',decoder:new TextDecoder(),onEvent:options.onEvent,stream:!!options.stream,raw:!!options.raw,contentType:'',settled:false};
       pending.timer=setTimeout(()=>{this.cancelRequest(r.id);reject(new Error('Muse の応答がタイムアウトしました。送信済みの可能性があるため、自動再送はしません。'));},options.timeout||30000);
@@ -149,7 +155,7 @@ class MuseClient extends EventEmitter {
       if(f.end) {
         if(p.ndjson&&p.status>=200&&p.status<300){p.text+=p.decoder.decode();if(p.text.trim())this.record(p,JSON.parse(p.text));if(!p.settled){p.settled=true;p.resolve({});}}
         else {
-          if(p.status<200||p.status>=300)throw new Error('Muse API がエラーを返しました (HTTP '+p.status+')。');
+          if(p.status<200||p.status>=300)throw new Error('Muse API がエラーを返しました (HTTP '+p.status+')。'+errorDetail(Buffer.concat(p.chunks)));
           const data=Buffer.concat(p.chunks);
           if(p.raw){p.settled=true;p.resolve({contentType:p.contentType,data});}
           else{const text=data.toString('utf8');const value=text?unwrap(JSON.parse(text)):{};p.settled=true;p.resolve(value);}
@@ -171,7 +177,11 @@ class MuseClient extends EventEmitter {
     for(const [id,p]of this.pending)if(p.path==='/chat/subscribe')this.cancelRequest(id);
     return this.request('POST','/chat/subscribe',{...(sessionId?{session_id:sessionId}:{}),capabilities:['chat_cancel','delta_stream']},{stream:true});
   }
-  send(text,sessionId,nodeId) {return this.request('POST','/chat/stream',{message:text,node_id:nodeId,...sessionId?{session_id:sessionId}:{},capabilities:['chat_cancel','delta_stream']},{stream:true});}
+  // With attachments the web client sends `items` (text + image/file parts); a reply adds `in_reply_to`.
+  send(text,sessionId,nodeId,{replyTo,attachments}={}) {
+    const content=attachments?.length?{items:[...text?[{type:'text',text}]:[],...attachments]}:{message:text};
+    return this.request('POST','/chat/stream',{...content,node_id:nodeId,...sessionId?{session_id:sessionId}:{},...replyTo?{in_reply_to:replyTo}:{},capabilities:['chat_cancel','delta_stream']},{stream:true,timeout:120000});
+  }
   cancel(sessionId) {return this.request('POST','/chat/cancel',{...(sessionId?{session_id:sessionId}:{})});}
 }
 module.exports={MuseClient,captureCredentials,allowedGateway,unwrap};

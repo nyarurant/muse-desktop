@@ -11,7 +11,16 @@ function messageFromEvent(event) {
   if(typeof content!=='string')return null;
   const id=event.message_id||p.message_id||p.id;
   if(typeof id!=='string'||!id)return null;
-  return {id,role,content,seq:Number(event.seq??p.chat_event_seq??p.seq??0),time:event.occurred_at_ms??p.created_at_ms??0,sessionId:p.session_id??event.session_id??'',resources:event.resources||p.resources||[]};
+  let attachments=[];
+  if(role==='user')({text:content,files:attachments}=splitAttachments(content));
+  return {id,role,content,seq:Number(event.seq??p.chat_event_seq??p.seq??0),time:event.occurred_at_ms??p.created_at_ms??0,sessionId:p.session_id??event.session_id??'',resources:event.resources||p.resources||[],reaction:typeof event.reaction_emoji==='string'?event.reaction_emoji:null,replyTo:typeof event.reply_to_message_id==='string'?event.reply_to_message_id:null,attachments};
+}
+// Uploaded attachments come back in the user's text as "[image:image/png workspace/...png]".
+const ATTACHMENT_MARKER=/\n?\[(image|file|video|audio):([\w.+-]+\/[\w.+-]+) ([^\]\n]+)\]/g;
+function splitAttachments(content) {
+  const files=[];
+  const text=content.replace(ATTACHMENT_MARKER,(_,kind,mime,path)=>{files.push({kind,mime,path:path.trim()});return '';}).trim();
+  return {text,files};
 }
 function mergeMessages(existing,events) {
   const map=new Map(existing.map(m=>[m.id,m]));
@@ -32,4 +41,4 @@ function applyDelta(existing,event) {
   const message={...prior,id:p.message_id,role:'assistant',content,seq:prior?.seq??Number(p.message_seq??p.seq??0),time:prior?.time??Date.now(),sessionId:p.session_id||'',lastDeltaSeq:Number(p.seq)||0};
   return [...existing.filter(m=>m.id!==message.id),message].sort((a,b)=>a.seq-b.seq||a.time-b.time);
 }
-if(typeof module!=='undefined')module.exports={messageFromEvent,mergeMessages,applyDelta};
+if(typeof module!=='undefined')module.exports={messageFromEvent,mergeMessages,applyDelta,splitAttachments};
