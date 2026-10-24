@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { MODES, getPlan, evaluate } = require('./approval-policy');
+const { resolveWorkspacePath } = require('./local-agent');
 const { createPrefs, fitToDisplays, isMuseUrl } = require('./prefs');
 const {
   app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, screen, shell,
@@ -22,6 +23,7 @@ const iconPath = path.join(__dirname, 'assets', 'icon.png');
 const startHidden = process.argv.includes('--hidden');
 let museWindow = null;
 let toolsWindow = null;
+let desktop = null;
 let tray = null;
 let prefs = null;
 let quitting = false;
@@ -208,7 +210,7 @@ function endProcess(proc) {
   }
 }
 
-function executeLocal(command, plan, autoApproved) {
+function executeLocal(command, plan, autoApproved, capture = false) {
   if (active) throw new Error('Another command is already running');
   const options = {
     cwd: workspace,
@@ -222,6 +224,7 @@ function executeLocal(command, plan, autoApproved) {
     ? spawn(plan.command, plan.args, options)
     : spawn(command, options);
   active = { proc, total: 0, command };
+  let captured = '';
   sendTools('tools:status', { state: 'running', command, autoApproved });
   sendTools('tools:output', `\n[${autoApproved ? 'AUTO OK' : 'Manual approval'}] ${command}\n`);
   const timeout = setTimeout(() => {
@@ -239,10 +242,11 @@ function executeLocal(command, plan, autoApproved) {
       clearTimeout(timeout);
       if (active?.proc === proc) active = null;
       sendTools('tools:status', {state: 'idle', exitCode: code, signal});
-      resolve({ code, signal, errored });
+      resolve({ code, signal, errored, output: capture ? captured : undefined });
     }
     const output = (buf) => {
       if (!active || active.proc !== proc) return;
+      if (capture && captured.length < 256 * 1024) captured += String(buf);
       active.total += buf.length;
       if (active.total <= MAX_OUTPUT) sendTools('tools:output', String(buf));
       else {
@@ -263,6 +267,119 @@ function executeLocal(command, plan, autoApproved) {
   return done;
 }
 
+
+// ---- Local agent bridge -------------------------------------------------
+// The agent loop itself lives in desktop-api.js (it owns the gateway
+// client); everything that touches this machine goes through here, so
+// agent calls get exactly the manual tools window's safeguards: the
+// shared single-run lock, the approval policy for commands, a prompt
+// for file changes unless Bypass is on, and file tools confined to the
+// workspace (resolveWorkspacePath plus a realpath check, so a symlink
+// inside the workspace cannot be used to escape it).
+async function confirmAgentAction(title, detail) {
+  const parent = (toolsWindow && !toolsWindow.isDestroyed()) ? toolsWindow : museWindow;
+  if (!parent || parent.isDestroyed()) return false;
+  const result = await dialog.showMessageBox(parent, {
+    type: 'warning', buttons: ['Cancel', 'Allow once'],
+    defaultId: 0, cancelId: 0, noLink: true, title, message: title, detail,
+  });
+  return result.response === 1;
+}
+function confinedTarget(root, rel) {
+  const target = resolveWorkspacePath(root, rel);
+  if (!target) throw new Error(`Path points outside the workspace: ${rel}`);
+  let probe = target;
+  while (!fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  const realRoot = fs.realpathSync(root);
+  const realProbe = fs.realpathSync(probe);
+  if (realProbe !== realRoot && !realProbe.startsWith(realRoot + path.sep)) {
+    throw new Error(`Path escapes the workspace through a symbolic link: ${rel}`);
+  }
+  return target;
+}
+async function executeAgentCall(call) {
+  try {
+    if (active || workflowRunning) return {ok: false, output: 'Another local command or workflow is already running.'};
+    const root = workspace;
+    if (call.tool === 'run') {
+      const decision = evaluate(call.command, approvalMode);
+      if (decision.prompt) {
+        const allowed = await confirmAgentAction('Agent command approval',
+          `The local agent (Muse) asked to run a command.\n\nWorking directory: ${root}\nApproval mode: ${approvalMode}\n\n${call.command}\n\nThis directory is NOT a sandbox. Commands can access files outside it.`);
+        if (!allowed) return {ok: false, output: 'User denied this command.'};
+      }
+      if (root !== workspace) return {ok: false, output: 'Workspace changed; command not run.'};
+      const result = await executeLocal(call.command, decision.plan, !decision.prompt, true);
+      const out = (result.output || '').trim();
+      return {
+        ok: !result.errored && result.code === 0,
+        output: `exit code: ${result.code ?? 'none'}${result.signal ? `, signal: ${result.signal}` : ''}${out ? `\n${out}` : ''}`,
+      };
+    }
+    if (call.tool === 'read') {
+      const target = confinedTarget(root, call.path);
+      const stat = fs.statSync(target);
+      if (!stat.isFile()) return {ok: false, output: `Not a file: ${call.path}`};
+      if (stat.size > 2 * 1024 * 1024) return {ok: false, output: `File is too large to read (${stat.size} bytes): ${call.path}`};
+      const text = fs.readFileSync(target, 'utf8');
+      if (text.includes('\0')) return {ok: false, output: `Not a UTF-8 text file: ${call.path}`};
+      const lines = text.split(/\r?\n/);
+      const start = call.start || 1;
+      const end = Math.min(call.end || lines.length, lines.length);
+      const body = lines.slice(start - 1, end).map((line, i) => `${start + i}: ${line}`).join('\n');
+      return {ok: true, output: `${call.path} (${lines.length} lines, showing ${start}-${end})\n${body}`};
+    }
+    if (call.tool === 'list') {
+      const target = confinedTarget(root, call.path || '.');
+      const entries = fs.readdirSync(target, {withFileTypes: true});
+      const shown = entries.slice(0, 200).map(e => `${e.isDirectory() ? '[dir] ' : '[file] '}${e.name}`);
+      return {ok: true, output: `${call.path || '.'} (${entries.length} entries${entries.length > shown.length ? `, showing first ${shown.length}` : ''})\n${shown.join('\n')}`};
+    }
+    if (call.tool === 'write' || call.tool === 'edit') {
+      const target = confinedTarget(root, call.path);
+      let content, preview;
+      if (call.tool === 'write') {
+        content = call.content;
+        preview = `Write ${call.content.length} characters to ${call.path}:\n\n${call.content.slice(0, 2000)}`;
+      } else {
+        const current = fs.readFileSync(target, 'utf8');
+        const first = current.indexOf(call.old);
+        if (first === -1) return {ok: false, output: `edit: the old text was not found in ${call.path}.`};
+        if (current.indexOf(call.old, first + 1) !== -1) return {ok: false, output: `edit: the old text occurs more than once in ${call.path}; include more surrounding context.`};
+        content = current.slice(0, first) + call.new + current.slice(first + call.old.length);
+        preview = `Edit ${call.path}:\n\n--- before ---\n${call.old.slice(0, 1000)}\n--- after ---\n${call.new.slice(0, 1000)}`;
+      }
+      if (approvalMode !== 'bypass') {
+        const allowed = await confirmAgentAction('Agent file change approval',
+          `The local agent (Muse) asked to change a file.\n\nWorkspace: ${root}\nApproval mode: ${approvalMode}\n\n${preview}`);
+        if (!allowed) return {ok: false, output: `User denied this ${call.tool}.`};
+      }
+      if (root !== workspace) return {ok: false, output: 'Workspace changed; file not changed.'};
+      fs.mkdirSync(path.dirname(target), {recursive: true});
+      fs.writeFileSync(target, content, 'utf8');
+      return {ok: true, output: `${call.tool === 'write' ? 'Wrote' : 'Edited'} ${call.path} (${content.length} characters).`};
+    }
+    return {ok: false, output: `Unsupported tool: ${call.tool}`};
+  } catch (error) {
+    return {ok: false, output: error.message};
+  }
+}
+function createLocalBridge() {
+  return {
+    workspace: () => workspace,
+    platform: () => process.platform,
+    approvalMode: () => approvalMode,
+    isBusy: () => Boolean(active) || workflowRunning,
+    report: (text) => sendTools('tools:output', text),
+    agentStatus: (state) => sendTools('tools:agent-status', state),
+    executeCall: (call) => executeAgentCall(call),
+  };
+}
+
 // One running copy only: launching again just brings the existing window forward.
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
@@ -278,7 +395,7 @@ app.userAgentFallback = app.userAgentFallback
 app.whenReady().then(() => {
   fs.mkdirSync(workspace, { recursive: true });
   prefs = createPrefs(app.getPath('userData'));
-  setupDesktop({getWindow: () => museWindow, openTools});
+  desktop = setupDesktop({getWindow: () => museWindow, openTools, localBridge: createLocalBridge()});
   setMenu();
   // The local tools window no longer opens automatically; use the menu or Ctrl+Shift+T.
   shortcutRegistered = globalShortcut.register(TOGGLE_SHORTCUT, toggleMuse);
@@ -397,6 +514,15 @@ app.whenReady().then(() => {
     if (!active) return workflowRunning;
     endProcess(active.proc);
     return true;
+  });
+  ipcMain.handle('tools:agent-start', async (event, task) => {
+    assertToolsSender(event);
+    if (!desktop?.startAgent) throw new Error('The local agent is not available');
+    return desktop.startAgent(task);
+  });
+  ipcMain.handle('tools:agent-stop', (event) => {
+    assertToolsSender(event);
+    return desktop?.stopAgent ? desktop.stopAgent() : false;
   });
   app.on('activate', () => {
     showMuse();

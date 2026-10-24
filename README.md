@@ -22,6 +22,7 @@ Meta の公式アプリではありません（Muse Desktop Community のコミ�
 - Muse の承認の自動化（手動 / 自動 / 重要なものだけ確認 / Bypass）
 - 作業が途中で止まったときの自動再開（`[System]` 付きの指示を送る。自分で停止したときは送らない）
 - ローカルでコマンドを実行する別ウィンドウ（`Ctrl+Shift+T`）
+- ローカルエージェント（そのウィンドウから開始）：専用サイドチャットの Muse が、承認モードに従って作業フォルダーでコマンド実行・ファイルの読み書きを繰り返す、Claude Code / Codex 風の作業ループ
 
 `Enter` で送信、`Shift+Enter` で改行します。
 `Ctrl+N` で新しいサイドチャット、`Ctrl+K` で検索、`Alt+Shift+Space` でウィンドウの表示・非表示を切り替えます。
@@ -32,6 +33,7 @@ Meta の公式アプリではありません（Muse Desktop Community のコミ�
 Muse の VM の暗号キーは初回接続時に記録し（`%APPDATA%/Muse App/gateway-pins.json`）、次回以降に変わっていたら接続を止めます。VM の再起動などで正当に変わった場合は、このファイルの該当エントリを消すと新しいキーで接続し直します。
 承認の自動化を Bypass にすると、支払い・購入やメディアの送信も確認なしで許可されます。
 ローカルのコマンド実行ウィンドウは、選んだ作業フォルダーの外にもアクセスできます。サンドボックスではありません。
+ローカルエージェントのファイル操作（読み書き・一覧）は作業フォルダーの外に出られませんが、コマンド実行は承認モードで確認するだけで、サンドボックスではありません。エージェントが動くのは、そのウィンドウで明示的に開始したときだけです。
 
 ## 開発
 
@@ -56,6 +58,6 @@ npm.cmd run test:live -- --har="C:/path/to/capture.devtools"
 この確認では実際に 1 通メッセージを送ります。
 
 ファイル構成: `main.js` が Electron のメインプロセス、`desktop-api.js` が画面との IPC、`muse-client.js` が API クライアント、`noise.js` が暗号化通信、`app.html` / `app.css` / `app-renderer.js` が会話画面です。
-承認の自動判定は `muse-approval-policy.js`、自動再開の判定は `auto-resume.js` にあります。
+承認の自動判定は `muse-approval-policy.js`、自動再開の判定は `auto-resume.js` にあります。ローカルエージェントのプロトコルとループは `local-agent.js`、ログイン検出は `login-flow.js` です。
 
 Meta とは関係のないコミュニティ製のプロトタイプです。

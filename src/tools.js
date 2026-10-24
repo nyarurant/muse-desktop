@@ -80,3 +80,22 @@ $('stop').addEventListener('click', async () => {
   try { await api.stop(); } catch (error) { append(`\n[Error] ${error.message}\n`); }
 });
 $('clear').addEventListener('click', () => { $('output').textContent = ''; });
+let agentRunning = false;
+function setAgent(running) {
+  agentRunning = running;
+  $('agent-run').disabled = running;
+  $('agent-stop').disabled = !running;
+  $('agent-status').textContent = running ? 'Running' : 'Idle';
+}
+api.onAgentStatus(state => setAgent(state.state === 'running'));
+$('agent-run').addEventListener('click', async () => {
+  if (agentRunning) return;
+  const task = $('agent-task').value.trim();
+  if (!task) { append('\n[Enter an agent task]\n'); return; }
+  try { const result = await api.agentStart(task); if (result.started) setAgent(true); }
+  catch (error) { append(`\n[Agent error] ${error.message}\n`); }
+});
+$('agent-stop').addEventListener('click', async () => {
+  try { await api.agentStop(); append('\n[Agent stop requested]\n'); }
+  catch (error) { append(`\n[Agent error] ${error.message}\n`); }
+});

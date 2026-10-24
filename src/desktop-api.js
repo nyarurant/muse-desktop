@@ -8,9 +8,12 @@ const MarkdownIt=require('markdown-it');
 const {MuseClient,captureCredentials}=require('./muse-client');
 const {MODES:APPROVAL_MODES,decide:decideApproval}=require('./muse-approval-policy');
 const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=require('./auto-resume');
+const {createWatcher: createLoginWatcher,MESSAGES: LOGIN_MESSAGES,timeoutMessage: loginTimeoutMessage}=require('./login-flow');
+const {runLoop: runAgentLoop,buildTaskMessage}=require('./local-agent');
+const {messageFromEvent}=require('./chat-model');
 const markdown=new MarkdownIt({html:false,linkify:true,breaks:true});
 const appUrl=pathToFileURL(path.join(__dirname,'app.html')).href;
-function setupDesktop({getWindow,openTools}) {
+function setupDesktop({getWindow,openTools,localBridge}) {
   const dataDir=app.getPath('userData');fs.mkdirSync(dataDir,{recursive:true});
   const authFile=path.join(dataDir,'muse-session.enc');
   const pinsFile=path.join(dataDir,'gateway-pins.json');
@@ -26,7 +29,7 @@ function setupDesktop({getWindow,openTools}) {
     if(!response.ok)throw new Error('Muse のログインが必要です。');return response.json();
   }
   const client=new MuseClient({credentials,fetchJson,checkPin:(id,fingerprint)=>{
-    if(pins[id]&&pins[id]!==fingerprint)throw new Error('Muse の VM キーが変わりました。接続先の変更を確認して、通信記録を読み込み直してください。');
+    if(pins[id]&&pins[id]!==fingerprint)throw new Error('Muse の VM キーが変わりました。接続先の変更を確認して、ログインし直すか通信記録を読み込み直してください。');
     if(!pins[id]){pins[id]=fingerprint;fs.writeFileSync(pinsFile,JSON.stringify(pins));}
   }});
   client.on('credentials',saveCredentials);
@@ -39,6 +42,88 @@ function setupDesktop({getWindow,openTools}) {
   let nodeId;try{nodeId=fs.readFileSync(nodeIdFile,'utf8');}catch{nodeId='muse-desktop-'+crypto.randomUUID();fs.writeFileSync(nodeIdFile,nodeId);}
   client.on('status',({status})=>{if(status!=='connected')subscribed=false;});
   async function connect() {await client.connect();if(!subscribed){await client.subscribe();subscribed=true;}return {status:client.status};}
+  // ---- Local agent (Claude Code / Codex style) ----
+  // The brain is Muse in a dedicated side chat; the local work goes
+  // through main.js's bridge, which applies the tools window's approval
+  // policy and workspace confinement. Replies are awaited via gateway
+  // events, with a history poll as fallback (same message twice in a
+  // row counts as settled).
+  let agentRun=null;
+  function waitAssistantReply(sessionId,baseline,timeoutMs=240000) {
+    return new Promise((resolve,reject)=>{
+      let lastCandidate=null;
+      const cleanup=()=>{clearTimeout(timer);clearInterval(poll);client.off('event',onEvent);};
+      const timer=setTimeout(()=>{cleanup();reject(new Error('Muse の応答がタイムアウトしました。'));},timeoutMs);
+      const onEvent=value=>{
+        const m=messageFromEvent(value);
+        if(m&&m.role==='assistant'&&m.sessionId===sessionId&&m.content){cleanup();resolve(m.content);return;}
+        if(value?.event==='delta.message_done'){
+          const p=value.payload||{};
+          if(p.session_id===sessionId){const t=p.transcript;const text=t?.display_text??t?.content??t?.text;if(typeof text==='string'&&text){cleanup();resolve(text);}}
+        }
+      };
+      client.on('event',onEvent);
+      const poll=setInterval(async()=>{
+        try {
+          const data=await client.history(sessionId);
+          const msgs=(data.chat_events||[]).map(messageFromEvent).filter(m=>m&&m.role==='assistant'&&m.content&&!baseline.has(m.id));
+          const latest=msgs[msgs.length-1];
+          if(latest){
+            if(lastCandidate&&lastCandidate.id===latest.id&&lastCandidate.content===latest.content){cleanup();resolve(latest.content);}
+            else lastCandidate=latest;
+          }
+        } catch { /* the thread may not exist until the first send lands */ }
+      },3000);
+      poll.unref?.();
+    });
+  }
+  async function runAgentTask(run,task) {
+    const baseline=new Set();
+    const snapshot=async()=>{try{const data=await client.history(run.sessionId);for(const ev of data.chat_events||[]){const m=messageFromEvent(ev);if(m)baseline.add(m.id);}}catch{}};
+    await snapshot();
+    const ask=async text=>{
+      const waiting=waitAssistantReply(run.sessionId,baseline);
+      await client.send(text,run.sessionId,nodeId);
+      const reply=await waiting;
+      await snapshot();
+      return reply;
+    };
+    const initial=buildTaskMessage({workspace:localBridge.workspace(),platform:localBridge.platform(),approvalMode:localBridge.approvalMode(),task});
+    const result=await runAgentLoop({
+      initialMessage:initial,ask,
+      execute:async call=>{
+        localBridge.report(`\n[Agent tool] ${call.tool}${call.command?' '+call.command:''}${call.path?' '+call.path:''}\n`);
+        const r=await localBridge.executeCall(call);
+        localBridge.report(`[${r.ok?'ok':'failed'}] ${String(r.output).slice(0,500)}\n`);
+        return r;
+      },
+      shouldStop:()=>run.stopped,
+      onStep:({step})=>localBridge.report(`\n[Agent step ${step} done]\n`),
+    });
+    localBridge.report(`\n[Agent ${result.status}] ${result.steps} step(s)\n${result.finalText||''}\n`);
+    emit('agent-done',{status:result.status,sessionId:run.sessionId});
+    return result;
+  }
+  function startAgent(task) {
+    if(typeof task!=='string'||!task.trim()||task.length>20000)throw new Error('タスクを入力してください（上限 20,000 文字）。');
+    if(agentRun)throw new Error('エージェントは既に実行中です。');
+    if(!localBridge)throw new Error('ローカルブリッジが利用できません。');
+    if(client.status!=='connected')throw new Error('Muse に接続してからエージェントを開始してください。');
+    const run={sessionId:crypto.randomUUID(),stopped:false};
+    agentRun=run;
+    localBridge.agentStatus({state:'running'});
+    localBridge.report(`\n[Agent started] session ${run.sessionId}\nTask: ${task.trim()}\n`);
+    runAgentTask(run,task.trim())
+      .catch(e=>localBridge.report(`\n[Agent error] ${e.message}\n`))
+      .finally(()=>{if(agentRun===run)agentRun=null;localBridge.agentStatus({state:'idle'});});
+    return {started:true,sessionId:run.sessionId};
+  }
+  function stopAgent() {
+    if(!agentRun)return false;
+    agentRun.stopped=true;
+    client.cancel(agentRun.sessionId).catch(()=>{});
+    return true;
+  }
   function importFile(file) {
     const c=captureCredentials(file);client.disconnect();client.credentials=c;saveCredentials(c);return {imported:true};
   }
@@ -241,16 +326,28 @@ function setupDesktop({getWindow,openTools}) {
       if(!url.startsWith('https://'))return {action:'deny'};
       return {action:'allow',overrideBrowserWindowOptions:{webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}}};
     });
-    let checking=false;
-    const check=async()=>{
-      if(checking)return;checking=true;
-      try {const auth=await fetchJson('/api/auth/check',{});if(auth?.ok){await client.refreshCredentials();if(client.credentials?.token){loginWindow?.close();await connect();emit('authenticated',{});}}}catch{}finally{checking=false;}
-    };
-    loginWindow.webContents.on('did-finish-load',check);
-    loginWindow.webContents.on('did-navigate-in-page',check);
-    loginWindow.on('closed',()=>{loginWindow=null;});loginWindow.loadURL('https://muse.ai/');return true;
+    // Navigation events alone can miss a completed sign-in (popup-based
+    // auth, SPA transitions), so poll the login probe while the window is
+    // open and surface the stage it is stuck at. Events stay as a nudge
+    // to check immediately instead of waiting for the next poll.
+    const watcher=createLoginWatcher({
+      probe:()=>client.probeLogin(),
+      onStage:stage=>emit('login-stage',{stage,message:LOGIN_MESSAGES[stage]||''}),
+      onReady:async()=>{
+        loginWindow?.close();
+        try {await connect();emit('authenticated',{});} catch { /* connect() already reported its status */ }
+      },
+      onTimeout:stage=>emit('login-stage',{stage:'timeout',message:loginTimeoutMessage(stage)}),
+    });
+    const nudge=()=>{void watcher.poll();};
+    loginWindow.webContents.on('did-finish-load',nudge);
+    loginWindow.webContents.on('did-navigate',nudge);
+    loginWindow.webContents.on('did-navigate-in-page',nudge);
+    loginWindow.on('closed',()=>{watcher.stop();loginWindow=null;});
+    watcher.start();
+    loginWindow.loadURL('https://muse.ai/');return true;
   });
   app.on('before-quit',()=>client.disconnect(false));
-  return {client,connect};
+  return {client,connect,startAgent,stopAgent};
 }
 module.exports={setupDesktop};
