@@ -8,6 +8,7 @@ const MarkdownIt=require('markdown-it');
 const {MuseClient,captureCredentials}=require('./muse-client');
 const {MODES:APPROVAL_MODES,decide:decideApproval}=require('./muse-approval-policy');
 const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=require('./auto-resume');
+const {createWatcher: createLoginWatcher,MESSAGES: LOGIN_MESSAGES,timeoutMessage: loginTimeoutMessage}=require('./login-flow');
 const markdown=new MarkdownIt({html:false,linkify:true,breaks:true});
 const appUrl=pathToFileURL(path.join(__dirname,'app.html')).href;
 function setupDesktop({getWindow,openTools}) {
@@ -272,14 +273,26 @@ function setupDesktop({getWindow,openTools}) {
       if(!url.startsWith('https://'))return {action:'deny'};
       return {action:'allow',overrideBrowserWindowOptions:{webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}}};
     });
-    let checking=false;
-    const check=async()=>{
-      if(checking)return;checking=true;
-      try {const auth=await fetchJson('/api/auth/check',{});if(auth?.ok){await client.refreshCredentials();if(client.credentials?.token){loginWindow?.close();await connect();emit('authenticated',{});}}}catch{}finally{checking=false;}
-    };
-    loginWindow.webContents.on('did-finish-load',check);
-    loginWindow.webContents.on('did-navigate-in-page',check);
-    loginWindow.on('closed',()=>{loginWindow=null;});loginWindow.loadURL('https://muse.ai/');return true;
+    // Navigation events alone can miss a completed sign-in (popup-based
+    // auth, SPA transitions), so poll the login probe while the window is
+    // open and surface the stage it is stuck at. Events stay as a nudge
+    // to check immediately instead of waiting for the next poll.
+    const watcher=createLoginWatcher({
+      probe:()=>client.probeLogin(),
+      onStage:stage=>emit('login-stage',{stage,message:LOGIN_MESSAGES[stage]||''}),
+      onReady:async()=>{
+        loginWindow?.close();
+        try {await connect();emit('authenticated',{});} catch { /* connect() already reported its status */ }
+      },
+      onTimeout:stage=>emit('login-stage',{stage:'timeout',message:loginTimeoutMessage(stage)}),
+    });
+    const nudge=()=>{void watcher.poll();};
+    loginWindow.webContents.on('did-finish-load',nudge);
+    loginWindow.webContents.on('did-navigate',nudge);
+    loginWindow.webContents.on('did-navigate-in-page',nudge);
+    loginWindow.on('closed',()=>{watcher.stop();loginWindow=null;});
+    watcher.start();
+    loginWindow.loadURL('https://muse.ai/');return true;
   });
   app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);client.disconnect(false);});
   return {client,connect};
