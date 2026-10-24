@@ -266,8 +266,10 @@ function setupDesktop({getWindow,openTools}) {
   handle('open-link',url=>{const u=new URL(url);if(!['https:','http:'].includes(u.protocol))throw new Error('このリンクは開けません。');return shell.openExternal(u.href);});
   handle('markdown',text=>{if(typeof text!=='string'||text.length>1000000)throw new Error('表示する文章が大きすぎます。');return markdown.render(text);});
   handle('import',async()=>{const result=await dialog.showOpenDialog(getWindow(),{title:'Muse の通信記録を読み込む',filters:[{name:'DevTools / HAR',extensions:['devtools','har','json']}],properties:['openFile']});if(result.canceled)return {canceled:true};importFile(result.filePaths[0]);return connect();});
+  let loginWatcher=null;
   function openLogin() {
-    if(loginWindow&&!loginWindow.isDestroyed()){loginWindow.show();loginWindow.focus();return true;}
+    // Re-showing the window also restarts a watcher that timed out, so a later sign-in is still noticed.
+    if(loginWindow&&!loginWindow.isDestroyed()){loginWindow.show();loginWindow.focus();if(loginWatcher&&!loginWatcher.running)loginWatcher.start();return true;}
     loginWindow=new BrowserWindow({title:'Muse — ログイン',width:1060,height:780,parent:getWindow(),webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}});
     loginWindow.webContents.setWindowOpenHandler(({url})=>{
       if(!url.startsWith('https://'))return {action:'deny'};
@@ -277,7 +279,7 @@ function setupDesktop({getWindow,openTools}) {
     // auth, SPA transitions), so poll the login probe while the window is
     // open and surface the stage it is stuck at. Events stay as a nudge
     // to check immediately instead of waiting for the next poll.
-    const watcher=createLoginWatcher({
+    const watcher=loginWatcher=createLoginWatcher({
       probe:()=>client.probeLogin(),
       onStage:stage=>emit('login-stage',{stage,message:LOGIN_MESSAGES[stage]||''}),
       onReady:async()=>{
@@ -286,11 +288,11 @@ function setupDesktop({getWindow,openTools}) {
       },
       onTimeout:stage=>emit('login-stage',{stage:'timeout',message:loginTimeoutMessage(stage)}),
     });
-    const nudge=()=>{void watcher.poll();};
+    const nudge=()=>{if(!watcher.running)watcher.start();else void watcher.poll();};
     loginWindow.webContents.on('did-finish-load',nudge);
     loginWindow.webContents.on('did-navigate',nudge);
     loginWindow.webContents.on('did-navigate-in-page',nudge);
-    loginWindow.on('closed',()=>{watcher.stop();loginWindow=null;});
+    loginWindow.on('closed',()=>{watcher.stop();loginWindow=null;loginWatcher=null;});
     watcher.start();
     loginWindow.loadURL('https://muse.ai/');return true;
   }
