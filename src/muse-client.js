@@ -51,17 +51,28 @@ class MuseClient extends EventEmitter {
     this.pending=new Map(); this.ws=null; this.transport=null; this.connecting=null; this.status='disconnected';
   }
   state(status,message) { this.status=status; this.emit('status',{status,message}); }
+  // One credential refresh attempt with a named outcome, so the login
+  // watcher can tell the user which stage is not completing instead of
+  // failing silently: 'waiting' (no signed-in website session yet),
+  // 'session' (signed in but no usable VM session), 'token' (the hatch
+  // token request did not yield a token), 'ready' (fresh credentials
+  // stored), 'error' (no website session available to probe with).
+  async probeLogin() {
+    if(!this.fetchJson) return 'error';
+    let session;
+    try { session=await this.fetchJson('/api/session?vm_state=true'); } catch { return 'waiting'; }
+    if(!session?.endpoint_url||!session?.vm_id) return 'session';
+    try { allowedGateway(session.endpoint_url); } catch { return 'session'; }
+    let result;
+    try { result=await this.fetchJson('/api/hatch/token',{vmAddress:session.endpoint_url,vmName:session.vm_name,force_refresh:true}); } catch { return 'token'; }
+    if(!result?.token) return 'token';
+    this.credentials={gateway:'https://hatch.metaaivm.com',vmId:session.vm_id,vmName:session.vm_name,endpoint:session.endpoint_url,appId:this.credentials?.appId||'hatch-web',token:result.token,notaryToken:result.notary_token};
+    this.emit('credentials',this.credentials);
+    return 'ready';
+  }
   async refreshCredentials() {
-    if(!this.fetchJson) return;
-    try {
-      const session=await this.fetchJson('/api/session?vm_state=true');
-      if(!session?.endpoint_url||!session.vm_id) return;
-      allowedGateway(session.endpoint_url);
-      const result=await this.fetchJson('/api/hatch/token',{vmAddress:session.endpoint_url,vmName:session.vm_name,force_refresh:true});
-      if(!result?.token) return;
-      this.credentials={gateway:'https://hatch.metaaivm.com',vmId:session.vm_id,vmName:session.vm_name,endpoint:session.endpoint_url,appId:this.credentials?.appId||'hatch-web',token:result.token,notaryToken:result.notary_token};
-      this.emit('credentials',this.credentials);
-    } catch { /* An imported session may work without website cookies. */ }
+    // Best effort only: an imported session may work without website cookies.
+    try { await this.probeLogin(); } catch { /* keep the stored credentials */ }
   }
   async connect() {
     if(this.status==='connected') return;

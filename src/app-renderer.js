@@ -520,6 +520,7 @@ function gateway(event){
 }
 window.muse.onEvent(value=>{
   if(value.type==='connection')setConnection(value.status,value.message);
+  else if(value.type==='login-stage'){if(value.message)notice(value.message);}
   else if(value.type==='gateway')gateway(value.event);
   else if(value.type==='authenticated')safely(connect)();
   else if(value.type==='stream-error')notice(value.message);
