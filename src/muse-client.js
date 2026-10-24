@@ -104,11 +104,11 @@ class MuseClient extends EventEmitter {
     if(this.status!=='connected'||!this.transport) return Promise.reject(new Error('Muse に接続してください。'));
     if(this.pending.size>=64) return Promise.reject(new Error('処理中の操作が多すぎます。'));
     let body=Buffer.alloc(0);
-    if(verb==='GET') {const q=new URLSearchParams();for(const[k,v]of Object.entries(params))if(v!==undefined&&v!==null)q.set(k,String(v));if(q.size)path+='?'+q;}
+    if(verb==='GET') {const q=new URLSearchParams();for(const[k,v]of Object.entries(params))if(Array.isArray(v))for(const x of v)q.append(k,String(x));else if(v!==undefined&&v!==null)q.set(k,String(v));if(q.size)path+='?'+q;}
     else body=Buffer.from(JSON.stringify(params));
     const r=this.transport.request(verb,path,body,[['x-app-id',this.credentials.appId],['Content-Type','application/json'],['Accept-Encoding','identity']],options.service||0);
     return new Promise((resolve,reject)=>{
-      const pending={resolve,reject,path,status:0,chunks:[],size:0,text:'',decoder:new TextDecoder(),onEvent:options.onEvent,stream:!!options.stream,settled:false};
+      const pending={resolve,reject,path,status:0,chunks:[],size:0,text:'',decoder:new TextDecoder(),onEvent:options.onEvent,stream:!!options.stream,raw:!!options.raw,contentType:'',settled:false};
       pending.timer=setTimeout(()=>{this.cancelRequest(r.id);reject(new Error('Muse の応答がタイムアウトしました。送信済みの可能性があるため、自動再送はしません。'));},options.timeout||30000);
       this.pending.set(r.id.toString(),pending);
       try { for(const frame of r.frames)this.ws.send(frame); } catch {this.cancelRequest(r.id);reject(new Error('送信中に通信が切れました。'));}
@@ -133,7 +133,7 @@ class MuseClient extends EventEmitter {
       if(f.type==='response') {
         p.status=f.status;
         const type=f.headers.find(([k])=>k.toLowerCase()==='content-type')?.[1]||'';
-        p.ndjson=p.stream||type.includes('ndjson');
+        p.contentType=type;p.ndjson=!p.raw&&(p.stream||type.includes('ndjson'));
         if(f.headers.some(([k,v])=>k.toLowerCase()==='content-encoding'&&!['identity',''].includes(v)))throw new Error('Muse が未対応の圧縮形式を返しました。');
       }
       if(f.body?.length) {
@@ -150,7 +150,9 @@ class MuseClient extends EventEmitter {
         if(p.ndjson&&p.status>=200&&p.status<300){p.text+=p.decoder.decode();if(p.text.trim())this.record(p,JSON.parse(p.text));if(!p.settled){p.settled=true;p.resolve({});}}
         else {
           if(p.status<200||p.status>=300)throw new Error('Muse API がエラーを返しました (HTTP '+p.status+')。');
-          const text=Buffer.concat(p.chunks).toString('utf8');const value=text?unwrap(JSON.parse(text)):{};p.settled=true;p.resolve(value);
+          const data=Buffer.concat(p.chunks);
+          if(p.raw){p.settled=true;p.resolve({contentType:p.contentType,data});}
+          else{const text=data.toString('utf8');const value=text?unwrap(JSON.parse(text)):{};p.settled=true;p.resolve(value);}
         }
         clearTimeout(p.timer);this.pending.delete(key);
         if(p.stream)this.emit('stream-end');

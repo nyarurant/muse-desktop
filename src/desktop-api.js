@@ -67,6 +67,25 @@ function setupDesktop({getWindow,openTools}) {
     if(!['allow_once','deny'].includes(decision))throw new Error('承認の指定が正しくありません。');
     return client.request('POST','/approvals/'+encodeURIComponent(validId(id))+'/decide',{decision},{service:1});
   });
+  // Muse の名前・アバター・配色。Web 版と同じゲートウェイ API (/identity, /fs/raw, /api/chat/themes, /activity)。
+  let avatarCache=null;
+  handle('identity',async()=>{
+    const r=await client.request('GET','/identity');
+    return {name:typeof r?.name==='string'?r.name.slice(0,80):'',themeColor:typeof r?.avatar?.chat_theme_color==='string'?r.avatar.chat_theme_color:'',
+      imagePath:r?.avatar?.image_exists!==false&&typeof r?.avatar?.image_path==='string'?r.avatar.image_path:''};
+  });
+  handle('avatar',async imagePath=>{
+    if(typeof imagePath!=='string'||!imagePath||imagePath.length>512)return null;
+    const parts=imagePath.replace(/^\/+/,'').split('/');
+    if(parts.some(p=>!p||p==='.'||p==='..'))throw new Error('アバターの場所が正しくありません。');
+    if(avatarCache?.path===imagePath)return avatarCache.url;
+    const r=await client.request('GET','/fs/raw/'+parts.map(encodeURIComponent).join('/'),{},{raw:true});
+    const type=String(r.contentType).split(';')[0].trim().toLowerCase();
+    if(!/^image\/(png|jpeg|webp|gif)$/.test(type)||r.data.length>8*1024*1024)throw new Error('アバター画像を表示できません。');
+    avatarCache={path:imagePath,url:'data:'+type+';base64,'+r.data.toString('base64')};return avatarCache.url;
+  });
+  handle('themes',()=>client.request('GET','/api/chat/themes'));
+  handle('activity',()=>client.request('GET','/activity',{limit:30,capabilities:['ACTIVITY_FEED_GOALS','ACTIVITY_FEED_PEER_CONVERSATIONS']}));
   handle('tools',()=>{openTools();return true;});
   handle('open-link',url=>{const u=new URL(url);if(!['https:','http:'].includes(u.protocol))throw new Error('このリンクは開けません。');return shell.openExternal(u.href);});
   handle('markdown',text=>{if(typeof text!=='string'||text.length>1000000)throw new Error('表示する文章が大きすぎます。');return markdown.render(text);});

@@ -80,7 +80,7 @@ function openMuse({show = true} = {}) {
     ...(bounds || {}),
     show: false,
     icon: iconPath,
-    backgroundColor: '#f8f8f6',
+    backgroundColor: '#181819',
     autoHideMenuBar: true, // Alt shows the menu.
     webPreferences: {
       nodeIntegration: false, contextIsolation: true, sandbox: true,
