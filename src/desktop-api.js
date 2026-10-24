@@ -25,9 +25,19 @@ function setupDesktop({getWindow,openTools}) {
     const response=await session.defaultSession.fetch('https://muse.ai'+route,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','Origin':'https://muse.ai'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});
     if(!response.ok)throw new Error('Muse のログインが必要です。');return response.json();
   }
+  // The VM's Noise key changes every time the VM restarts, and the web client does not pin it
+  // (it trusts the authenticated gateway). Accept the new key like the web client, but keep a
+  // record of every change and tell the user instead of failing silently or blocking.
+  let keyChanged=false;
   const client=new MuseClient({credentials,fetchJson,checkPin:(id,fingerprint)=>{
-    if(pins[id]&&pins[id]!==fingerprint)throw new Error('Muse の VM キーが変わりました。接続先の変更を確認して、通信記録を読み込み直してください。');
-    if(!pins[id]){pins[id]=fingerprint;fs.writeFileSync(pinsFile,JSON.stringify(pins));}
+    if(pins[id]===fingerprint)return;
+    if(pins[id]){
+      keyChanged=true;
+      const log=Array.isArray(pins._changes)?pins._changes:[];
+      pins._changes=[...log,{vm:id,at:new Date().toISOString(),from:pins[id].slice(0,16),to:fingerprint.slice(0,16)}].slice(-20);
+    }
+    pins[id]=fingerprint;
+    try{fs.writeFileSync(pinsFile,JSON.stringify(pins));}catch{}
   }});
   client.on('credentials',saveCredentials);
   client.on('status',value=>emit('connection',value));
@@ -38,7 +48,28 @@ function setupDesktop({getWindow,openTools}) {
   const nodeIdFile=path.join(dataDir,'device-id');
   let nodeId;try{nodeId=fs.readFileSync(nodeIdFile,'utf8');}catch{nodeId='muse-desktop-'+crypto.randomUUID();fs.writeFileSync(nodeIdFile,nodeId);}
   client.on('status',({status})=>{if(status!=='connected')subscribed=false;});
-  async function connect() {await client.connect();if(!subscribed){await client.subscribe();subscribed=true;}return {status:client.status};}
+  async function connect() {
+    await client.connect();if(!subscribed){await client.subscribe();subscribed=true;}
+    const changed=keyChanged;keyChanged=false;
+    return {status:client.status,keyChanged:changed};
+  }
+  // Reconnect by itself after the connection drops (e.g. the VM restarted), so auto-approval and
+  // auto-resume keep working. Stops when sign-in is needed; backs off 3 s -> 60 s.
+  let reconnectTimer=null,reconnectDelay=0,quitting=false;
+  function scheduleReconnect() {
+    if(reconnectTimer||quitting)return;
+    reconnectDelay=Math.min(60000,reconnectDelay?reconnectDelay*2:3000);
+    reconnectTimer=setTimeout(async()=>{
+      reconnectTimer=null;
+      if(client.status==='connected'||client.connecting||quitting)return;
+      try{const r=await connect();emit('reconnected',{keyChanged:r.keyChanged});}
+      catch{if(!['auth_required','connected'].includes(client.status))scheduleReconnect();}
+    },reconnectDelay);
+  }
+  client.on('status',({status})=>{
+    if(status==='connected'){reconnectDelay=0;clearTimeout(reconnectTimer);reconnectTimer=null;}
+    else if(status==='disconnected'||status==='error')scheduleReconnect();
+  });
   function importFile(file) {
     const c=captureCredentials(file);client.disconnect();client.credentials=c;saveCredentials(c);return {imported:true};
   }
@@ -250,7 +281,7 @@ function setupDesktop({getWindow,openTools}) {
     loginWindow.webContents.on('did-navigate-in-page',check);
     loginWindow.on('closed',()=>{loginWindow=null;});loginWindow.loadURL('https://muse.ai/');return true;
   });
-  app.on('before-quit',()=>client.disconnect(false));
+  app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);client.disconnect(false);});
   return {client,connect};
 }
 module.exports={setupDesktop};

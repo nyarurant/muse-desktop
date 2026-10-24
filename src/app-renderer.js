@@ -525,16 +525,23 @@ window.muse.onEvent(value=>{
   else if(value.type==='stream-error')notice(value.message);
   else if(value.type==='approval-auto'){state.autoApproved.add(value.id);state.approvals=state.approvals.filter(a=>a.approval_id!==value.id);renderApprovals();}
   else if(value.type==='auto-resume'){notice('止まっていた「'+(value.title||'会話')+'」に再開を指示しました。');refreshSessions().catch(()=>{});if(value.id===state.selected)scheduleHistory();}
+  else if(value.type==='reconnected')safely(async()=>{notice(value.keyChanged?KEY_CHANGED:'Muse に再接続しました。');await afterConnect();})();
   else if(value.type==='home')safely(()=>select(''))();
 });
 async function connect(){
   if(state.connecting)return;
   $('notice').hidden=true;
-  await call('connect');setConnection('connected');
+  const result=await call('connect');setConnection('connected');
+  if(result?.keyChanged)notice(KEY_CHANGED);
+  await afterConnect();$('prompt').focus();
+}
+const KEY_CHANGED='Muse の VM が再起動したため、新しい暗号キーで接続しました。';
+// Reload everything a (re)connection may have missed, and re-follow the chat on screen.
+async function afterConnect(){
   loadIdentity().catch(()=>{});
+  if(state.selected&&!state.draftSessions.has(state.selected))await call('subscribe',state.selected).catch(()=>{});
   await refreshSessions();await loadHistory();markSeen(state.selected);
   loadActivity().catch(()=>{});if(state.tab==='upcoming')loadUpcoming().catch(()=>{});
-  $('prompt').focus();
 }
 async function send(){
   const input=$('prompt'),text=input.value.trim(),id=state.selected;
