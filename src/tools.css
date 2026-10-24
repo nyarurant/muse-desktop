@@ -1,0 +1,22 @@
+:root {color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0a0e1a;color:#eef2ff}
+*{box-sizing:border-box}body{margin:0 auto;max-width:1050px;padding:30px;line-height:1.4}
+.topline{display:flex;align-items:start;justify-content:space-between;margin-bottom:22px}
+.eyebrow{letter-spacing:2px;font-size:11px;color:#91a1bd;font-weight:700}
+h1{margin:8px 0 4px;font-size:31px;letter-spacing:-1px}h1 span{color:#a8a7ff}.topline p{margin:0;color:#8795ad}
+.status{padding:8px 13px;border:1px solid #344264;border-radius:999px;color:#bfcde7;font-size:13px}
+.panel{background:#141a2b;border:1px solid #2c3651;border-radius:16px;padding:18px 20px;margin:15px 0}
+.section-title{display:block;font-weight:650;margin-bottom:12px;font-size:14px}.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.bar code{display:block;background:#0d1220;border:1px solid #293651;border-radius:8px;padding:12px;flex:1;overflow-wrap:anywhere;font-size:13px}
+button{cursor:pointer;border:1px solid #384461;border-radius:9px;padding:10px 14px;color:#eaf0ff;background:#212c45;font-weight:600}
+button:hover{background:#32415f}button:disabled{opacity:.45;cursor:not-allowed}.primary{background:#695ce0;border-color:#695ce0}.primary:hover{background:#8174ec}.danger{background:#772940;border-color:#923f57}.danger:hover{background:#a13b57}
+.hint{color:#8e9cb2;font-size:12px;margin:9px 0 0}.presets{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:20px}.presets button{font-size:12px;padding:8px 11px}
+textarea{display:block;resize:vertical;min-height:95px;width:100%;background:#0d1220;border:1px solid #394560;border-radius:10px;color:#eff3ff;padding:14px;font:14px/1.5 ui-monospace,Consolas,monospace;outline:none}
+textarea:focus{border-color:#8883ff}.actions{margin-top:12px}.output-panel{min-height:180px}pre{min-height:120px;max-height:330px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#090d17;border:1px solid #25314b;color:#cdd8e9;padding:16px;border-radius:9px;font:12px/1.6 ui-monospace,Consolas,monospace}footer{text-align:center;color:#7586a0;font-size:12px;margin-top:24px}
+.muted {font-size:12px;color:#91a1bd;font-weight:400}
+.modes {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.mode {background:#0d1220;border:1px solid #344264;display:flex;flex-direction:column;gap:7px;align-items:flex-start;text-align:left;min-height:128px;padding:14px 12px}
+.mode strong {font-size:14px}
+.mode small {font-size:12px;line-height:1.5;color:#cad2e2}
+.mode span {font-size:11px;color:#899cb9}
+.mode[aria-pressed="true"] {background:#29264e;border:2px solid #a8a7ff;padding:13px 11px}
+.alert {color:#d5bb83;font-size:12px;border-left:3px solid #ad894f;padding-left:10px;line-height:1.55}
+@media(max-width:720px){.modes{grid-template-columns:1fr}.mode{min-height:auto}}

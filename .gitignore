@@ -1,0 +1,8 @@
+node_modules/
+dist/
+# Verification screenshots/results contain real conversation content.
+artifacts/
+# Captures contain Muse auth tokens.
+*.har
+*.devtools
+*.log

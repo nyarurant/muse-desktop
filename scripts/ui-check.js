@@ -1,0 +1,46 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const crypto=require('node:crypto');
+const {chromium}=require('playwright-core');
+const endpoint=process.argv.find(a=>a.startsWith('--cdp='))?.slice(6)||'http://127.0.0.1:9337';
+(async()=>{
+  const browser=await chromium.connectOverCDP(endpoint);
+  try{
+    const context=browser.contexts()[0];
+    const page=context.pages().find(p=>p.url().endsWith('/app.html'));assert(page,'Local application page missing');
+    const errors=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.waitForFunction(()=>document.getElementById('connectionLabel').textContent==='接続済み'&&!document.getElementById('refresh').disabled&&document.querySelectorAll('.message').length>0);
+    assert(page.url().startsWith('file:'),'Conversation UI must be local');
+    assert(await page.locator('.message').count()>0,'Real account history not visible');
+    await page.locator('#newChat').click();
+    await page.waitForFunction(()=>!document.getElementById('welcome').hidden);
+    const marker='MUSE_UI_CHECK_'+crypto.randomBytes(4).toString('hex');
+    await page.locator('#prompt').fill('Muse アプリの画面からの接続テストです。ツールや外部操作は行わず、次の文字列だけを返信してください: '+marker);
+    await page.locator('#send').click();
+    await page.waitForFunction(marker=>[...document.querySelectorAll('.assistant .message-body')].some(e=>e.textContent.includes(marker)),marker,{timeout:90000});
+    await page.waitForFunction(()=>document.getElementById('thinking').hidden,{timeout:30000});
+    await page.locator('#prompt').fill('下書きの保持を確認');
+    assert(await page.locator('#send').isEnabled(),'Send must become usable after reply');
+    await page.locator('#refresh').click();
+    await page.waitForFunction(()=>!document.getElementById('refresh').disabled);
+    assert.equal(await page.locator('#prompt').inputValue(),'下書きの保持を確認');
+    assert(await page.locator('.assistant .message-body').filter({hasText:marker}).count()>0,'Reply must persist after refresh');
+    await page.locator('#prompt').fill('');
+    await page.locator('#settings').click();assert(await page.locator('#settingsDialog').isVisible());await page.locator('#closeSettings').click();
+    await page.locator('#search').fill('NO_SUCH_CONVERSATION_'+marker);assert.equal(await page.locator('.session').count(),0);await page.locator('#search').fill('');
+    const artifacts=path.join(__dirname,'..','artifacts');fs.mkdirSync(artifacts,{recursive:true});
+    await page.screenshot({path:path.join(artifacts,'muse-desktop.png')});
+    await page.setViewportSize({width:600,height:800});
+    if(!await page.evaluate(()=>document.body.classList.contains('sidebar-hidden')))await page.locator('#collapseSidebar').click();
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Narrow view overflows');
+    await page.screenshot({path:path.join(artifacts,'muse-compact.png')});
+    await page.setViewportSize({width:1250,height:850});await page.locator('#showSidebar').click();
+    await page.locator('#tools').click();await context.waitForEvent('page',{predicate:p=>p.url().endsWith('/tools.html'),timeout:5000}).catch(()=>{});
+    const tools=context.pages().find(p=>p.url().endsWith('/tools.html'));assert(tools,'Local tools must still open');await tools.close();
+    assert.deepEqual(errors,[],'Renderer errors');
+    console.log(JSON.stringify({localPage:true,liveHistory:true,sendViaUI:true,assistantReplyVisible:true,replyPersisted:true,draftPreserved:true,settings:true,search:true,compactLayout:true,localTools:true,rendererErrors:errors.length}));
+  }finally{await browser.close();}
+})().catch(e=>{console.error(e.message);process.exitCode=1;});
