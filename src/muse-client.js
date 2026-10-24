@@ -90,9 +90,9 @@ class MuseClient extends EventEmitter {
     const noise=new NoiseXX(); let established=false;
     return new Promise((resolve,reject)=>{
       const timeout=setTimeout(()=>fail(new Error('Muse への接続がタイムアウトしました。')),20000);
-      const fail=e=>{clearTimeout(timeout);if(this.ws===ws){this.disconnect(false);this.state('error',e.message);}reject(e);};
+      const fail=(e,status='error')=>{clearTimeout(timeout);if(this.ws===ws){this.disconnect(false);this.state(status,e.message);}reject(e);};
       ws.on('open',()=>{try{ws.send(noise.message1());}catch{fail(new Error('暗号化接続を開始できませんでした。'));}});
-      ws.on('unexpected-response',(_,res)=>fail(new Error(res.statusCode===401||res.statusCode===403?'Muse の認証が切れています。ログインし直してください。':'Muse に接続できませんでした (HTTP '+res.statusCode+')。')));
+      ws.on('unexpected-response',(_,res)=>{const auth=res.statusCode===401||res.statusCode===403;fail(new Error(auth?'Muse の認証が切れています。ログインし直してください。':'Muse に接続できませんでした (HTTP '+res.statusCode+')。'),auth?'auth_required':'error');});
       ws.on('error',()=>{if(!established)fail(new Error('Muse の通信に失敗しました。接続情報を更新してください。'));});
       ws.on('message',data=>{
         if(this.ws!==ws) return;

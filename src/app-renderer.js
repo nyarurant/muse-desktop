@@ -677,4 +677,4 @@ safely(async()=>{$('approvalMode').value=await call('approvalMode');})();
 $('autoResume').addEventListener('change',safely(async e=>{const el=e.target;el.value=await call('setAutoResume',el.value==='on')?'on':'off';}));
 safely(async()=>{$('autoResume').value=await call('autoResume')?'on':'off';})();
 renderApprovals();
-safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);if(info.hasSession)await connect();else $('settingsDialog').showModal();})();
+safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);if(info.hasSession)await connect();else await call('login');})();

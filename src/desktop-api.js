@@ -266,7 +266,7 @@ function setupDesktop({getWindow,openTools}) {
   handle('open-link',url=>{const u=new URL(url);if(!['https:','http:'].includes(u.protocol))throw new Error('このリンクは開けません。');return shell.openExternal(u.href);});
   handle('markdown',text=>{if(typeof text!=='string'||text.length>1000000)throw new Error('表示する文章が大きすぎます。');return markdown.render(text);});
   handle('import',async()=>{const result=await dialog.showOpenDialog(getWindow(),{title:'Muse の通信記録を読み込む',filters:[{name:'DevTools / HAR',extensions:['devtools','har','json']}],properties:['openFile']});if(result.canceled)return {canceled:true};importFile(result.filePaths[0]);return connect();});
-  handle('login',()=>{
+  function openLogin() {
     if(loginWindow&&!loginWindow.isDestroyed()){loginWindow.show();loginWindow.focus();return true;}
     loginWindow=new BrowserWindow({title:'Muse — ログイン',width:1060,height:780,parent:getWindow(),webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false}});
     loginWindow.webContents.setWindowOpenHandler(({url})=>{
@@ -293,7 +293,16 @@ function setupDesktop({getWindow,openTools}) {
     loginWindow.on('closed',()=>{watcher.stop();loginWindow=null;});
     watcher.start();
     loginWindow.loadURL('https://muse.ai/');return true;
-  });
+  }
+  handle('login',openLogin);
+  // Login is required: a website session lets every (re)connect fetch a fresh token, where an
+  // imported capture's token eventually expires. Open the login window whenever it is missing.
+  client.on('status',({status})=>{if(status==='auth_required')openLogin();});
+  async function ensureWebLogin() {
+    let stage;try{stage=await client.probeLogin();}catch{return;}
+    if(stage==='waiting')openLogin();
+  }
+  setTimeout(()=>{ensureWebLogin().catch(()=>{});},3000);
   app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);client.disconnect(false);});
   return {client,connect};
 }

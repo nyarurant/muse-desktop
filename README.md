@@ -6,8 +6,9 @@ Muse と会話するための、非公式の Windows デスクトップアプリ
 ## 使い方
 
 `dist/Muse App 0.4.0.exe` を起動します。Node.js のインストールは不要です。
-初回は「接続と設定」から Muse アカウントでログインするか、ブラウザの DevTools で保存した通信記録（`.devtools` / `.har`）を読み込みます。
-接続情報は Windows の暗号化ストレージで暗号化し、`%APPDATA%/Muse App/muse-session.enc` に保存します。通信記録そのものはコピーしません。
+起動するとログイン画面が開くので、Muse アカウントでログインします。ログインは必須です。接続のたびに新しいトークンを取り直すので、ログインしたままなら接続が切れても自動で戻ります。ログインが切れたときは、ログイン画面が自動で開きます。
+接続情報は Windows の暗号化ストレージで暗号化し、`%APPDATA%/Muse App/muse-session.enc` に保存します。
+（開発・検証用に、DevTools の通信記録 `.devtools` / `.har` から接続する `--import-har=<path>` も残しています。）
 Meta の公式アプリではありません（Muse Desktop Community のコミュニティ版です）。
 
 ## 機能
