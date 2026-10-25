@@ -104,7 +104,7 @@
         <div class="ws-row"><span class="ws-row-label">Muse に PC を操作させる</span><span class="ws-row-value" id="wsPcModeText"></span><button type="button" class="ws-switch" id="wsPcMode" role="switch" aria-checked="false" aria-label="Muse に PC を操作させる"></button></div>
         <button type="button" class="ws-row" id="wsChoose"><span class="ws-row-label">作業フォルダー</span><span class="ws-row-value"><span class="ws-path" id="wsFolder">読み込んでいます…</span></span><svg class="ws-chevron"><use href="#i-chevron"/></svg></button>
       </div>
-      <p class="ws-note">コマンドはこのフォルダーで始まります。コマンドもファイル操作も確認なしで実行され、フォルダーの外にも読み書きできます。</p>
+      <p class="ws-note">コマンドはこのフォルダーで始まります。フォルダーの外にも読み書きできます。Muse による危険な操作は、実行前に確認します（設定 › アクセス許可）。</p>
       <h3 class="ws-section">コマンド</h3>
       <div class="ws-presets"><button type="button" class="pill-button" data-ws-cmd="git status">git status</button><button type="button" class="pill-button" data-ws-cmd="npm test">npm test</button><button type="button" class="pill-button" data-ws-cmd="npm run build">npm run build</button><button type="button" class="pill-button" data-ws-cmd="npm install">npm install</button><button type="button" class="pill-button" data-ws-cmd="python -m pytest">pytest</button></div>
       <div class="ws-composer"><label class="sr-only" for="wsCommand">コマンド</label><textarea id="wsCommand" rows="1" spellcheck="false" placeholder="コマンドを入力（Ctrl+Enter で実行）"></textarea><button type="button" class="round-button send-button" id="wsRun" title="実行 (Ctrl+Enter)" aria-label="実行"><svg><use href="#i-arrow"/></svg></button></div>
@@ -196,6 +196,8 @@
           <h3 class="settings-label">このアプリでの自動許可</h3>
           <p class="settings-intro">このアプリが起動している間、Muse の「今回許可」をアプリが代わりに押します。上のデフォルト設定（Web 版と共通）とは別に、このアプリだけで働きます。</p>
           <div class="settings-group" id="settingsApprovalModes" role="radiogroup" aria-label="このアプリでの自動許可"></div>
+          <h3 class="settings-label">この PC での操作</h3>
+          <div class="settings-group"><div class="settings-row"><div class="settings-row-text"><strong>危険な操作は実行前に確認する</strong><span>フォルダーの一括削除、ディスク・レジストリ・サービスの変更、シャットダウン、Git の強制 push、システムフォルダーへの書き込みなどは、Muse が PC で実行する前に確認します。上の自動許可（Bypass を含む）とは別に働きます。</span></div><button type="button" class="ws-switch" id="pcGuardSwitch" role="switch" aria-checked="true" aria-label="危険な操作は実行前に確認する"></button></div></div>
           <select id="approvalMode" aria-label="承認の自動化" hidden><option value="manual">手動</option><option value="auto">自動</option><option value="important">重要なものだけ確認</option><option value="bypass">Bypass</option></select>
         </section>
         <section class="settings-section" data-settings-section="channels" hidden>

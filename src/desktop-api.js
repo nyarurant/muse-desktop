@@ -11,6 +11,7 @@ const {MODES:APPROVAL_MODES,decide:decideApproval}=require('./muse-approval-poli
 const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=require('./auto-resume');
 const {createWatcher: createLoginWatcher,MESSAGES: LOGIN_MESSAGES,timeoutMessage: loginTimeoutMessage}=require('./login-flow');
 const {messageFromEvent}=require('./chat-model');
+const {review:reviewPcCall}=require('./pc-safety');
 const {waitForReply}=require('./agent-reply');
 const {PcAuth}=require('./pc-auth');
 const {createPcAuthStore}=require('./pc-auth-store');
@@ -94,6 +95,20 @@ function setupDesktop({getWindow,localBridge}) {
   function agentState(run,state,extra={}) {
     const value={state,sessionId:run.viewSessionId,...extra};localBridge.agentStatus(value);emit('pc-agent',value);
   }
+  // ---- Guard for risky PC operations (src/pc-safety.js): ask before they run. On by default. ----
+  const guardFile=path.join(dataDir,'pc-guard.json');
+  let pcGuard=true;try{pcGuard=JSON.parse(fs.readFileSync(guardFile,'utf8')).enabled!==false;}catch{}
+  async function confirmPcCall(risk,command,params,timeout) {
+    const w=getWindow(),win=w&&!w.isDestroyed()?w:null;
+    if(win){if(win.isMinimized())win.restore();win.show();win.flashFrame(true);}
+    const ms=Math.max(5000,Math.min(120000,(Number(timeout)||120000)-3000));
+    const target=command==='system.run'?'コマンド:\n'+String(params.command).slice(0,800):'書き込み先:\n'+String(params.path).slice(0,400);
+    const options={type:'warning',buttons:['実行しない','実行する'],defaultId:0,cancelId:0,noLink:true,title:'この PC での操作の確認',
+      message:'Muse が「'+risk.reason+'」をしようとしています。実行しますか？',detail:target+'\n\n'+Math.round(ms/1000)+' 秒以内に答えないと、実行しません。',signal:AbortSignal.timeout(ms)};
+    try{const r=win?await dialog.showMessageBox(win,options):await dialog.showMessageBox(options);return r.response===1;}
+    catch{return false;}
+    finally{win?.flashFrame(false);}
+  }
   async function connectPc() {
     if(pcConnecting)return pcConnecting;
     pcConnecting=connectPcOnce().finally(()=>{pcConnecting=null;});return pcConnecting;
@@ -106,6 +121,8 @@ function setupDesktop({getWindow,localBridge}) {
     if(generation!==pcGeneration)throw new Error('PC の接続を中止しました。');
     nativeDevice?.disconnect();
     const device=new NativeDevice({commands:nativeExecutor.commands,displayName:require('node:os').hostname()+' (Windows PC)',execute:async(command,params,timeout,id)=>{
+      const risk=pcGuard?reviewPcCall(command,params,localBridge.workspace()):null;
+      if(risk&&!(await confirmPcCall(risk,command,params,timeout)))return {ok:false,error:'The user declined this operation on the PC ('+risk.reason+'). Do not retry it unless the user asks.'};
       const owner='pc-native-'+id;nativeOwners.add(owner);
       try{return await nativeExecutor.execute(command,params,timeout,owner);}finally{nativeOwners.delete(owner);}
     }});
@@ -223,6 +240,11 @@ function setupDesktop({getWindow,localBridge}) {
   const validId=id=>{if(typeof id!=='string'||id.length>255)throw new Error('会話 ID が正しくありません。');return id;};
   handle('info',()=>({version:app.getVersion(),status:client.status,hasSession:!!client.credentials,platform:process.platform}));
   handle('pc-state',pcState);
+  handle('pc-guard',()=>pcGuard);
+  handle('set-pc-guard',enabled=>{
+    if(typeof enabled!=='boolean')throw new Error('設定が正しくありません。');
+    pcGuard=enabled;try{fs.writeFileSync(guardFile,JSON.stringify({enabled}));}catch{}return pcGuard;
+  });
   handle('pc-auth-state',authState);
   handle('pc-auth-start',accepted=>auth().start(accepted===true));
   handle('pc-auth-send',contact=>auth().send(contact));

@@ -190,6 +190,13 @@
   function renderPcState(){
     byId('settingsPcState').textContent=state.pcConnected?'接続中':'未接続';
   }
+  // ---- この PC での危険な操作の確認 (app-only) ----
+  async function loadPcGuard(){const r=await window.muse.pcGuard().catch(()=>null);if(r?.ok)byId('pcGuardSwitch').setAttribute('aria-checked',String(r.value));}
+  byId('pcGuardSwitch').addEventListener('click',async()=>{
+    const sw=byId('pcGuardSwitch'),next=sw.getAttribute('aria-checked')!=='true';sw.disabled=true;
+    const r=await window.muse.setPcGuard(next).catch(e=>({ok:false,error:e.message}));
+    sw.disabled=false;if(r.ok)sw.setAttribute('aria-checked',String(r.value));else notice('設定を変更できませんでした: '+r.error);
+  });
   // ---- データコントロール: the web's "help improve AI models" switch (product_improvements) ----
   let training=null;
   function renderTraining(){
@@ -220,7 +227,7 @@
   window.openSettings=section=>{
     show(section||current);renderAll();
     if(!dialog.open){dialog.showModal();byId('settingsSectionTitle').focus();}
-    load().catch(()=>{});loadUsage();loadTraining();
+    load().catch(()=>{});loadUsage();loadTraining();loadPcGuard();
   };
   window.renderSettingsTheme=()=>{if(dialog.open){renderModes();renderSwatches();}};
 
