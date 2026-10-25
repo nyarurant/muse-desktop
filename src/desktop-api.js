@@ -477,6 +477,42 @@ function setupDesktop({getWindow,localBridge}) {
     ]);
     return {permissions,devices,connectors,channels};
   });
+  // ---- Plan and usage: the web reads them from a Next.js server action ("fetchSubscriptionAction").
+  // Its id is a build hash, so it is looked up from the signed-in page's scripts and refreshed on failure.
+  let subscriptionAction=null;
+  async function websiteText(route) {
+    const r=await session.defaultSession.fetch('https://muse.ai'+route,{headers:{'Accept':route==='/'?'text/html':'*/*'},signal:AbortSignal.timeout(15000)});
+    if(!r.ok)throw new Error('HTTP '+r.status);return r.text();
+  }
+  async function findSubscriptionAction() {
+    const html=await websiteText('/');
+    const queue=[...new Set([...html.matchAll(/\/_next\/static\/chunks\/([A-Za-z0-9_.-]+\.js)/g)].map(m=>m[1]))],seen=new Set();
+    while(queue.length&&seen.size<2000){
+      const file=queue.shift();if(seen.has(file))continue;seen.add(file);
+      let text;try{text=await websiteText('/_next/static/chunks/'+file);}catch{continue;}
+      const found=text.includes('fetchSubscriptionAction')&&text.match(/createServerReference\)\("([0-9a-f]{40,44})"[^)]{0,160}"fetchSubscriptionAction"\)/);
+      if(found)return found[1];
+      for(const ref of text.matchAll(/static\/chunks\/([A-Za-z0-9_.-]+\.js)/g))if(!seen.has(ref[1]))queue.push(ref[1]);
+    }
+    throw new Error('利用状況の取得方法が見つかりませんでした（ページ '+html.length+' 文字、スクリプト '+seen.size+' 個を確認）。');
+  }
+  async function fetchSubscription(retry=true) {
+    subscriptionAction??=await findSubscriptionAction();
+    let data=null,ok=false;
+    try{
+      const r=await session.defaultSession.fetch('https://muse.ai/',{method:'POST',headers:{'Next-Action':subscriptionAction,'Accept':'text/x-component','Content-Type':'text/plain;charset=UTF-8','Origin':'https://muse.ai'},body:JSON.stringify([{includeAgreement:true}]),signal:AbortSignal.timeout(15000)});
+      ok=r.ok;
+      // React Server Components lines look like `1:{...}`; the one with "subscription" is the answer.
+      for(const line of (await r.text()).split('\n')){const m=line.match(/^[0-9a-f]+:(\{.*\})\s*$/);if(!m)continue;try{const v=JSON.parse(m[1]);if(v&&typeof v==='object'&&'subscription' in v){data=v;break;}}catch{}}
+    }catch{}
+    if(!ok||!data?.subscription){if(retry){subscriptionAction=null;return fetchSubscription(false);}throw new Error('利用状況を読み込めませんでした。');}
+    const s=data.subscription,str=v=>typeof v==='string'?v.slice(0,200):null,num=v=>Number.isFinite(v)?v:null;
+    return {plan:str(s.tier?.name),paid:s.tier?.isPaid===true,percentUsed:num(s.usage?.percentUsed),resetsAt:num(s.usage?.resetsAt),
+      statusSubtitle:str(s.statusSubtitle),usageLabel:str(s.usageRowLabel),usageValue:str(s.usageRowValueLabel),
+      topupLabel:str(s.topupRowLabel),topupValue:str(s.topupRowValueLabel),topupBalance:num(s.topupBalance),topupTotal:num(s.topupTotal),
+      upgradeLabel:str(s.entryPointCtaLabel)};
+  }
+  handle('subscription',()=>fetchSubscription());
   handle('set-theme',id=>{
     if(typeof id!=='string'||!/^[\w-]{1,64}$/.test(id))throw new Error('テーマカラーが正しくありません。');
     return client.request('POST','/api/chat/themes/set',{theme_id:id});

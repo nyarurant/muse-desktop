@@ -302,6 +302,11 @@ button.settings-row:active { background: var(--chip-active); }
 .settings-skeleton + .settings-skeleton { margin-top: 2px; }
 @keyframes settings-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { dialog.settings-dialog[open], .settings-section:not([hidden]), .settings-skeleton { animation: none; } }
+.settings-usage { flex-direction: column; align-items: stretch; gap: 8px; }
+.settings-usage-head { display: flex; align-items: center; gap: 12px; }
+.settings-bar { height: 6px; border-radius: 9999px; background: var(--hover); overflow: hidden; }
+.settings-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--unread); }
+.settings-accent strong { color: var(--unread); }
 .settings-segment { display: flex; gap: 2px; padding: 3px; border-radius: 9999px; background: var(--chip-active); }
 .settings-segment button { width: 30px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 9999px; color: var(--muted); }
 .settings-segment button svg { width: 15px; height: 15px; }

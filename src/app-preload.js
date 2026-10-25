@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('muse',Object.freeze({
   avatarVideo:videoPath=>ipcRenderer.invoke('muse:avatar-video',videoPath),
   themes:()=>ipcRenderer.invoke('muse:themes'),
   settingsOverview:()=>ipcRenderer.invoke('muse:settings-overview'),
+  subscription:()=>ipcRenderer.invoke('muse:subscription'),
   setTheme:id=>ipcRenderer.invoke('muse:set-theme',id),
   connectorIcon:id=>ipcRenderer.invoke('muse:connector-icon',id),
   setPermissionDefaults:value=>ipcRenderer.invoke('muse:set-permission-defaults',value),

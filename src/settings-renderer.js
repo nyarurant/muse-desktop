@@ -163,10 +163,34 @@
       return row;
     })));
   }
+  // ---- 利用状況 (same numbers as the web's Settings > 一般) ----
+  let usage=null,usageLoading=null;
+  function bar(percent){const b=el('div','settings-bar');const fill=el('span');fill.style.width=Math.max(0,Math.min(100,percent||0))+'%';b.append(fill);return b;}
+  function renderUsage(){
+    const host=byId('settingsUsage');host.replaceChildren();
+    if(!usage){host.append(placeholder());return;}
+    if(usage.error){host.append(hintText('読み込めませんでした: '+usage.error));return;}
+    const u=usage.value,rows=[];
+    const main=el('div','settings-row settings-usage');const head=el('div','settings-usage-head');
+    head.append(rowText(u.usageLabel||u.plan||'プラン',u.statusSubtitle),el('span','settings-value',u.usageValue||(u.percentUsed!=null?u.percentUsed+'%使用済み':'')));
+    main.append(head,bar(u.percentUsed));rows.push(main);
+    if(u.topupLabel){
+      const used=u.topupTotal>0&&u.topupBalance!=null?100*(1-u.topupBalance/u.topupTotal):0;
+      const top=el('div','settings-row settings-usage');const th=el('div','settings-usage-head');
+      th.append(rowText(u.topupLabel),el('span','settings-value',u.topupValue||''));top.append(th,bar(used));rows.push(top);
+    }
+    if(u.upgradeLabel&&!u.paid){const b=el('button','settings-row settings-link settings-accent');b.type='button';b.append(rowText(u.upgradeLabel),icon('i-external','settings-chevron'));b.addEventListener('click',()=>openUrl('https://muse.ai/'));rows.push(b);}
+    host.append(group(rows));
+  }
+  async function loadUsage(){
+    if(!state.connected||usageLoading)return usageLoading;
+    usageLoading=window.muse.subscription().then(r=>{usage=r.ok?{value:r.value}:{error:r.error};}).catch(e=>{usage={error:e.message};}).finally(()=>{usageLoading=null;renderUsage();});
+    return usageLoading;
+  }
   function renderPcState(){
     byId('settingsPcState').textContent=state.pcConnected?'接続中':'未接続';
   }
-  function renderAll(){renderModes();renderSwatches();renderConnectors();renderPermissions();renderApprovalModes();renderChannels();renderDevices();renderPcState();}
+  function renderAll(){renderUsage();renderModes();renderSwatches();renderConnectors();renderPermissions();renderApprovalModes();renderChannels();renderDevices();renderPcState();}
 
   async function load(){
     if(!state.connected){overview=null;renderAll();return;}
@@ -177,7 +201,7 @@
   window.openSettings=section=>{
     show(section||current);renderAll();
     if(!dialog.open){dialog.showModal();byId('settingsSectionTitle').focus();}
-    load().catch(()=>{});
+    load().catch(()=>{});loadUsage();
   };
   window.renderSettingsTheme=()=>{if(dialog.open){renderModes();renderSwatches();}};
 
