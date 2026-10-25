@@ -209,26 +209,36 @@ function executeLocal(command, capture = false, owner = null, settings = {}) {
   };
   const proc = spawn(command, options);
   active = { proc, total: 0, command, owner };
-  let captured = '', stdout = '', stderr = '', timedOut = false, truncated = false;
+  let captured = '', stdout = '', stderr = '', timedOut = false, truncated = false, leftRunning = false;
   sendTools('tools:status', { state: 'running', command });
+  let errored = false;
+  let completed = false;
+  let finish = () => {};
+  // A program the command starts in the background (start, npm start, a GUI app) inherits the output
+  // pipes, so 'close' would wait for it to quit. The command counts as finished once the shell exits
+  // and the pipes are let go; after a kill the pipes are likewise given up on after a short wait.
+  const release = (delay) => setTimeout(() => {
+    if (completed) return;
+    proc.stdout?.destroy(); proc.stderr?.destroy();
+    finish(proc.exitCode, proc.signalCode);
+  }, delay);
   const timeout = setTimeout(() => {
     if (active?.proc === proc) {
       timedOut = true;
       sendTools('tools:output', '\n[実行時間の上限（10分）に達したため終了します]\n');
       endProcess(proc);
+      release(5000);
     }
   }, settings.timeout_ms || MAX_RUNTIME_MS);
-  let errored = false;
-  let completed = false;
   const done = new Promise((resolve) => {
-    function finish(code, signal) {
+    finish = (code, signal) => {
       if (completed) return;
       completed = true;
       clearTimeout(timeout);
       if (active?.proc === proc) active = null;
       sendTools('tools:status', {state: 'idle', exitCode: code, signal});
-      resolve({ code, signal, errored, output: capture ? captured : undefined, stdout, stderr, timedOut, truncated });
-    }
+      resolve({ code, signal, errored, output: capture ? captured : undefined, stdout, stderr, timedOut, truncated, leftRunning });
+    };
     const output = (buf, stream) => {
       if (!active || active.proc !== proc) return;
       if (capture && captured.length < 256 * 1024) captured += String(buf);
@@ -252,8 +262,15 @@ function executeLocal(command, capture = false, owner = null, settings = {}) {
       // Electron/Node should emit close afterward. Cover a missing close event.
       if (!proc.pid) finish(null, 'error');
     });
+    proc.once('exit', () => setTimeout(() => {
+      if (completed) return;
+      leftRunning = true;
+      sendTools('tools:output', '\n[コマンドは終了しました。起動したプログラムはそのまま動いています]\n');
+      release(0);
+    }, 2000));
     proc.once('close', finish);
   });
+  active.release = release;
   return done;
 }
 
@@ -269,9 +286,9 @@ function createLocalBridge() {
     runNative: async (params, owner) => {
       if(active||workflowRunning)return {ok:false,error:'Another local command or workflow is already running.'};
       const started=Date.now();const result=await executeLocal(params.command,true,owner,params);
-      return {ok:!result.errored,payload:{stdout:result.stdout,stderr:result.stderr,exit_code:result.code,timed_out:result.timedOut,truncated:result.truncated,duration_ms:Date.now()-started}};
+      return {ok:!result.errored,payload:{stdout:result.stdout,stderr:result.stderr,exit_code:result.code,timed_out:result.timedOut,truncated:result.truncated,background_programs_still_running:result.leftRunning,duration_ms:Date.now()-started}};
     },
-    stop: (owner) => { if (active?.owner === owner) endProcess(active.proc); },
+    stop: (owner) => { if (active?.owner === owner) { endProcess(active.proc); active.release(5000); } },
   };
 }
 
@@ -350,6 +367,7 @@ app.whenReady().then(() => {
     stopWorkflow = true;
     if (!active) return workflowRunning;
     endProcess(active.proc);
+    active.release(5000);
     return true;
   });
   ipcMain.handle('tools:agent-start', async (event, task) => {
