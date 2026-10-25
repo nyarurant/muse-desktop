@@ -22,7 +22,7 @@
   },
   "build": {
     "appId": "dev.community.muse-app",
-    "productName": "Muse App",
+    "productName": "Muse Desktop Community",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -40,7 +40,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Muse"
+      "shortcutName": "Muse Desktop Community"
     }
   },
   "dependencies": {

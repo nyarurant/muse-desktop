@@ -42,7 +42,7 @@ test('attachment markers are split out of user text', () => {
   assert.equal(assistant.content, '[image:image/png x.png]');
 });
 test('a main chat send stays on the main chat view even when Muse returns its real session ID',()=>{
-  assert.equal(sessionAfterSend('',{session_id:'80dfec68-primary',is_thread:false}),'');
+  assert.equal(sessionAfterSend('',{session_id:'primary-session-id',is_thread:false}),'');
   assert.equal(sessionAfterSend('draft-local',{session_id:'thread-server',is_thread:true}),'thread-server');
   assert.equal(sessionAfterSend('thread-a',{}),'thread-a');
 });

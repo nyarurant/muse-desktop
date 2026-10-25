@@ -368,7 +368,8 @@ function setupDesktop({getWindow,localBridge}) {
   });
   // Muse 承認の自動処理。選んだモード（bypass を含む）は次回起動時も引き継ぐ。
   const modeFile=path.join(dataDir,'approval-mode.json');
-  let approvalMode='auto';try{const m=JSON.parse(fs.readFileSync(modeFile,'utf8')).mode;if(APPROVAL_MODES.includes(m))approvalMode=m;}catch{}
+  // New installs start without automatic approvals; the user opts in under 設定 › アクセス許可.
+  let approvalMode='manual';try{const m=JSON.parse(fs.readFileSync(modeFile,'utf8')).mode;if(APPROVAL_MODES.includes(m))approvalMode=m;}catch{}
   let lastPending=[];const autoTried=new Set();
   async function autoDecide() {
     const mode=approvalMode;

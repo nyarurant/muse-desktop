@@ -1,15 +1,19 @@
-# Muse App 0.5.5
+# Muse Desktop Community 0.5.5（非公式）
 
-Muse と会話するための、非公式の Windows デスクトップアプリです。
+Muse と会話するための、**非公式**の Windows デスクトップアプリです。
+
+> **注意:** このプロジェクトは Meta Platforms, Inc. とは関係がなく、Meta による承認・保証・サポートを受けていません。「Muse」「Meta」は各社の商標です。
+> 公開 API ではなく、muse.ai の Web 版が内部で使っている通信や仕組みを読み解いて使っています。Meta 側の変更でいつでも動かなくなる可能性があり、利用規約上の扱いも保証できません。**自己責任で**使ってください。
+> PC 連携を有効にすると、Muse（Meta のサーバー上の AI）がこの PC のコマンドやファイルを扱えるようになります。内容を理解したうえで使ってください。
 会話画面はアプリ内の HTML/CSS/JavaScript で描画し、muse.ai の Web 版と同じゲートウェイ API を使って、Muse の VM と Noise XX で暗号化した通信を直接行います。
 
 ## 使い方
 
-`npm.cmd run dist:win` で作る `dist/Muse App Setup 0.5.5.exe` でインストールするか、`npm.cmd run dist:portable` で作る `dist/Muse App 0.5.5.exe`（インストール不要のポータブル版）を起動します。Node.js のインストールは不要です。コード署名はしていないので、初回は Windows SmartScreen の警告が出ます。
+`npm.cmd run dist:win` で作る `dist/Muse Desktop Community Setup 0.5.5.exe` でインストールするか、`npm.cmd run dist:portable` で作る `dist/Muse Desktop Community 0.5.5.exe`（インストール不要のポータブル版）を起動します。Node.js のインストールは不要です。コード署名はしていないので、初回は Windows SmartScreen の警告が出ます。
 ログインは必須です。ログインしていないと、アプリの画面全体がログイン画面になり、その中に表示される Meta のページで Muse アカウントにログインします（入力した内容はアプリには渡りません）。完了すると自動で接続し、いつもの画面に戻ります。
 接続のたびに新しいトークンを取り直すので、ログインしたままなら接続が切れても自動で戻ります。ログインが切れたときは、またログイン画面になります。
 接続情報は Windows の暗号化ストレージで暗号化し、`%APPDATA%/Muse App/muse-session.enc` に保存します。DevTools の通信記録（`.devtools` / `.har`）からの接続はできません（開発用の `npm.cmd run test:live` だけが使います）。
-Meta の公式アプリではありません（Muse Desktop Community のコミュニティ版です）。
+Meta の公式アプリではありません。設定などの保存先は `%APPDATA%/Muse App` です（旧名のまま）。
 
 ## 機能
 
