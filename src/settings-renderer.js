@@ -5,7 +5,7 @@
 (function(){
   const byId=id=>document.getElementById(id);
   const dialog=byId('settingsDialog');
-  const TITLES={general:'一般',connectors:'コネクター',permissions:'アクセス許可',channels:'メッセージチャネル',devices:'デバイス',app:'このアプリ',web:'Web 版で管理'};
+  const TITLES={general:'一般',connectors:'コネクター',permissions:'アクセス許可',channels:'メッセージチャネル',devices:'デバイス',data:'データコントロール',app:'このアプリ',web:'Web 版で管理'};
   let current='general',overview=null,loading=null;
 
   function el(tag,className,text){const e=document.createElement(tag);if(className)e.className=className;if(text!==undefined)e.textContent=text;return e;}
@@ -190,7 +190,26 @@
   function renderPcState(){
     byId('settingsPcState').textContent=state.pcConnected?'接続中':'未接続';
   }
-  function renderAll(){renderUsage();renderModes();renderSwatches();renderConnectors();renderPermissions();renderApprovalModes();renderChannels();renderDevices();renderPcState();}
+  // ---- データコントロール: the web's "help improve AI models" switch (product_improvements) ----
+  let training=null;
+  function renderTraining(){
+    const sw=byId('trainingSwitch');
+    sw.disabled=!training||!!training.error||!!training.saving;
+    sw.setAttribute('aria-checked',String(training?.enabled===true));
+  }
+  async function loadTraining(){
+    if(!state.connected)return;
+    const r=await window.muse.training().catch(e=>({ok:false,error:e.message}));
+    training=r.ok?{enabled:r.value.enabled}:{error:r.error};renderTraining();
+  }
+  byId('trainingSwitch').addEventListener('click',async()=>{
+    if(!training||training.error||training.saving)return;
+    const next=!training.enabled;training={enabled:next,saving:true};renderTraining();
+    const r=await window.muse.setTraining(next).catch(e=>({ok:false,error:e.message}));
+    training=r.ok?{enabled:r.value.enabled}:{enabled:!next};renderTraining();
+    if(!r.ok)notice('設定を変更できませんでした: '+r.error);
+  });
+  function renderAll(){renderTraining();renderUsage();renderModes();renderSwatches();renderConnectors();renderPermissions();renderApprovalModes();renderChannels();renderDevices();renderPcState();}
 
   async function load(){
     if(!state.connected){overview=null;renderAll();return;}
@@ -201,7 +220,7 @@
   window.openSettings=section=>{
     show(section||current);renderAll();
     if(!dialog.open){dialog.showModal();byId('settingsSectionTitle').focus();}
-    load().catch(()=>{});loadUsage();
+    load().catch(()=>{});loadUsage();loadTraining();
   };
   window.renderSettingsTheme=()=>{if(dialog.open){renderModes();renderSwatches();}};
 

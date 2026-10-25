@@ -446,7 +446,23 @@ button.settings-row:active { background: var(--chip-active); }
 .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; }
 .lib-card { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 24px; background: var(--bg); text-align: left; transition: border-color .12s, transform .12s; }
 .lib-card:hover { border-color: var(--muted); }
-.lib-preview { height: 112px; display: grid; place-items: center; background: var(--hover); }
+.lib-preview { height: 112px; display: grid; place-items: center; overflow: hidden; background: var(--hover); }
+.lib-preview-image img { width: 100%; height: 100%; object-fit: cover; }
+.lib-doc { align-self: stretch; justify-self: stretch; padding: 12px 14px; overflow: hidden; font-size: 11px; line-height: 15px; color: var(--muted); text-align: left; }
+.lib-doc-title { margin-bottom: 4px; color: var(--text); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-doc-body { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* Library categories replace the chat list in the sidebar while the library is open. */
+.library-nav { display: none; }
+.page-library .library-nav { display: block; }
+.page-library .sidebar-scroll > :not(.library-nav) { display: none !important; }
+.library-nav .session svg { width: 18px; height: 18px; color: var(--muted); }
+.library-nav .session.active svg { color: var(--text); }
+/* Microphone in the composer, left of send (takes the send spot while the box is empty). */
+.mic-button { right: 48px; color: var(--muted); }
+.mic-button:hover { background: var(--hover); color: var(--text); }
+.mic-button svg { width: 19px; height: 19px; }
+.composer:has(.send-button:disabled):has(#stop[hidden]) .mic-button { right: 12px; }
+.mic-button[aria-pressed="true"] { background: var(--danger); color: #fff; animation: pulse 1.3s infinite; }
 .lib-ext { padding: 4px 10px; border-radius: 8px; background: var(--chip-active); font: 600 12px/16px ui-monospace, Consolas, monospace; color: var(--muted); }
 .lib-foot { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
 .lib-icon { width: 28px; height: 28px; flex-shrink: 0; display: grid; place-items: center; color: var(--muted); }

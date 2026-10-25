@@ -348,7 +348,7 @@ const PAGES={feed:'フィード',ideas:'アイデア',goals:'目標',library:'�
 // 'workspace' is the static local work page (workspace-renderer.js); the others render into #pageView.
 let pageToken=0;
 function showPage(name,tab){
-  state.page=name||null;document.body.classList.toggle('page-mode',!!name);$('pageView').hidden=!name||name==='workspace';$('workspaceView').hidden=name!=='workspace';
+  state.page=name||null;document.body.classList.toggle('page-mode',!!name);document.body.classList.toggle('page-library',name==='library');$('pageView').hidden=!name||name==='workspace';$('workspaceView').hidden=name!=='workspace';
   for(const b of document.querySelectorAll('.rail-button')){const on=name?b.dataset.page===name:b.id==='railChat';b.classList.toggle('active',on);if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}
   if(!name)return;
   if(name==='workspace'){$('workspaceView').scrollTop=0;window.onWorkspaceShown?.();return;}
@@ -414,34 +414,57 @@ async function renderGoals(body,token){
   }
   if(!body.childElementCount)body.append(hint('目標はまだありません。'));
 }
-async function renderLibrary(body,token,tab='artifacts'){
-  const tabs=$('pageTabs');
-  for(const [key,label] of [['artifacts','ファイル'],['media','メディア']]){const b=el('button',tab===key?'active':'',label);b.addEventListener('click',()=>showPage('library',key));tabs.append(b);}
-  const data=await call('library',tab,0);if(token!==pageToken)return;
+// Library like the web: categories in the sidebar, cards with a preview of the file.
+const LIBRARY={
+  all:{preset:'artifacts',title:'すべてのアーティファクト',match:null},
+  documents:{preset:'artifacts',title:'ドキュメント',match:/\.(md|txt|pdf|docx?|rtf|csv|json|ya?ml)$/i},
+  web:{preset:'artifacts',title:'ウェブアーティファクト',match:/\.html?$/i},
+  images:{preset:'media',title:'画像',match:/\.(png|jpe?g|webp|gif)$/i},
+  videos:{preset:'media',title:'動画',match:/\.(mp4|webm|mov|m4v)$/i},
+};
+function libraryPreview(e,ext){
+  const box=el('div','lib-preview');
+  if(/^(png|jpe?g|webp|gif)$/i.test(ext)){box.classList.add('lib-preview-image');box.append(lazyImage(e.path,e.name));return box;}
+  box.append(el('span','lib-ext',ext.toUpperCase()||'FILE'));
+  if(/^(md|txt|html?|json|csv|ya?ml)$/i.test(ext)){
+    call('textPreview',e.path).then(text=>{
+      if(typeof text!=='string'||!text.trim())return;
+      let title='',body=text;
+      if(/^html?$/i.test(ext)){const doc=new DOMParser().parseFromString(text,'text/html');doc.querySelectorAll('script,style,noscript,template').forEach(n=>n.remove());title=doc.title||doc.querySelector('h1,h2')?.textContent||'';body=doc.body?.textContent||'';}
+      else if(/^md$/i.test(ext)){const m=text.match(/^#\s+(.+)$/m);title=m?m[1]:'';body=text.replace(/^#.*$/m,'').replace(/[#*_`>|-]/g,' ');}
+      const doc=el('div','lib-doc');if(title)doc.append(el('div','lib-doc-title',title.trim().slice(0,80)));
+      doc.append(el('div','lib-doc-body',body.replace(/\s+/g,' ').trim().slice(0,400)));box.replaceChildren(doc);
+    }).catch(()=>{});
+  }
+  return box;
+}
+async function renderLibrary(body,token,tab='all'){
+  const key=LIBRARY[tab]?tab:tab==='media'?'images':'all',view=LIBRARY[key];
+  $('pageTitle').textContent=view.title;
+  for(const b of document.querySelectorAll('#libraryNav [data-lib]'))b.classList.toggle('active',b.dataset.lib===key);
+  const data=await call('library',view.preset,0);if(token!==pageToken)return;
   body.replaceChildren();
-  const entries=Array.isArray(data?.entries)?data.entries:[];
+  const entries=(Array.isArray(data?.entries)?data.entries:[]).filter(e=>!view.match||view.match.test(e.name||''));
   const save=e=>safely(async()=>{const r=await call('saveFile',e.path);if(r?.saved)notice(e.name+' を保存しました: '+r.path);});
-  if(tab==='media'){
+  if(key==='images'){
     const grid=el('div','media-grid');
     for(const e of entries){const b=el('button');b.title=e.name+'（クリックで保存）';b.append(lazyImage(e.path,e.name));b.addEventListener('click',save(e));grid.append(b);}
     body.append(grid);
   }else{
-    // Cards like the web library: a preview area (file type), then icon, name and size / date.
     const card=e=>{
       const b=el('button','lib-card');b.type='button';b.title=e.name+'（クリックで保存）';b.addEventListener('click',save(e));
       const ext=(String(e.name).match(/\.([A-Za-z0-9]{1,6})$/)||[])[1]||'';
-      const preview=el('div','lib-preview');preview.append(el('span','lib-ext',ext.toUpperCase()||'FILE'));
-      const foot=el('div','lib-foot'),box=el('span','lib-icon');box.append(icon('file'));
+      const foot=el('div','lib-foot'),icn=el('span','lib-icon');icn.append(icon(/^(mp4|webm|mov|m4v)$/i.test(ext)?'video':/^html?$/i.test(ext)?'globe':'file'));
       const text=el('div','lib-text');text.append(el('div','lib-name',e.name),el('div','lib-meta',[ext.toUpperCase()||'ファイル',formatSize(e.size||0),new Date(e.modified_ms).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})].join(' · ')));
-      foot.append(box,text);b.append(preview,foot);return b;
+      foot.append(icn,text);b.append(libraryPreview(e,ext),foot);return b;
     };
     const sorted=entries.slice().sort((a,b)=>(b.modified_ms||0)-(a.modified_ms||0));
     const grid=list=>{const g=el('div','lib-grid');g.append(...list.map(card));return g;};
-    if(sorted.length>4)body.append(el('h3','page-section-title','最近'),grid(sorted.slice(0,4)),el('h3','page-section-title','すべてのファイル'));
+    if(key==='all'&&sorted.length>4)body.append(el('h3','page-section-title','最近'),grid(sorted.slice(0,4)),el('h3','page-section-title','すべてのアーティファクト'));
     body.append(grid(sorted));
   }
-  if(!entries.length)body.append(hint(tab==='media'?'画像はまだありません。':'ファイルはまだありません。'));
-  else if(data.has_more)body.append(hint('ほかに '+(data.total-entries.length)+' 件あります。'));
+  if(!entries.length)body.append(hint(view.title+'はまだありません。'));
+  else if(data.has_more&&!view.match)body.append(hint('ほかに '+(data.total-entries.length)+' 件あります。'));
 }
 async function select(id){
   if(state.page)showPage(null);
@@ -789,6 +812,7 @@ $('dismissNotice').addEventListener('click',()=>$('notice').hidden=true);
 for(const id of ['showSidebar','collapseSidebar'])$(id).addEventListener('click',()=>document.body.classList.toggle('sidebar-hidden'));
 $('railChat').addEventListener('click',()=>{showPage(null);showSidebar();$('prompt').focus();});
 for(const b of document.querySelectorAll('.rail-button[data-page]'))b.addEventListener('click',()=>showPage(b.dataset.page));
+for(const b of document.querySelectorAll('#libraryNav [data-lib]'))b.addEventListener('click',()=>showPage('library',b.dataset.lib));
 $('railSearch').addEventListener('click',()=>{showPage(null);showSidebar();$('search').focus();});
 $('panelClose').addEventListener('click',()=>setPanel(false));
 $('panelToggle').addEventListener('click',()=>setPanel(true));

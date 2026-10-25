@@ -5,6 +5,7 @@ const crypto=require('node:crypto');
 const {pathToFileURL}=require('node:url');
 const {app,ipcMain,dialog,safeStorage,session,shell,WebContentsView}=require('electron');
 const MarkdownIt=require('markdown-it');
+const WebSocket=require('ws');
 const {MuseClient}=require('./muse-client');
 const {MODES:APPROVAL_MODES,decide:decideApproval}=require('./muse-approval-policy');
 const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=require('./auto-resume');
@@ -309,6 +310,18 @@ function setupDesktop({getWindow,localBridge}) {
   };
   // Images shown in the feed, idea cards and library, returned as data: URLs (the page CSP allows no remote images).
   const imageCache=new Map();
+  // First part of a text file, for library card previews (markdown / html / plain text).
+  const previewCache=new Map();
+  handle('text-preview',async p=>{
+    const route=vmPath(p);
+    if(previewCache.has(route))return previewCache.get(route);
+    const r=await client.request('GET',route,{},{raw:true});
+    const type=String(r.contentType).split(';')[0].trim().toLowerCase();
+    if(!/^(text\/|application\/(json|xml|javascript))/.test(type)&&!/\.(md|txt|html?|json|csv|js|ts|py|css)$/i.test(p))return null;
+    const text=r.data.subarray(0,16384).toString('utf8');
+    if(previewCache.size>=200)previewCache.delete(previewCache.keys().next().value);
+    previewCache.set(route,text);return text;
+  });
   handle('image',async ref=>{
     const route=typeof ref==='string'&&/^\/api\/(?:feed\/units\/[\w-]+\/media\/[\w-]+|idea-cards\/media\/[\w-]+)(?:\?v=[\w-]+)?$/.test(ref)?ref:vmPath(ref);
     if(imageCache.has(route))return imageCache.get(route);
@@ -494,7 +507,7 @@ function setupDesktop({getWindow,localBridge}) {
       if(found)return found[1];
       for(const ref of text.matchAll(/static\/chunks\/([A-Za-z0-9_.-]+\.js)/g))if(!seen.has(ref[1]))queue.push(ref[1]);
     }
-    throw new Error('利用状況の取得方法が見つかりませんでした（ページ '+html.length+' 文字、スクリプト '+seen.size+' 個を確認）。');
+    throw new Error('利用状況を読み込めませんでした。時間をおいて、もう一度開いてください。');
   }
   async function fetchSubscription(retry=true) {
     subscriptionAction??=await findSubscriptionAction();
@@ -505,7 +518,7 @@ function setupDesktop({getWindow,localBridge}) {
       // React Server Components lines look like `1:{...}`; the one with "subscription" is the answer.
       for(const line of (await r.text()).split('\n')){const m=line.match(/^[0-9a-f]+:(\{.*\})\s*$/);if(!m)continue;try{const v=JSON.parse(m[1]);if(v&&typeof v==='object'&&'subscription' in v){data=v;break;}}catch{}}
     }catch{}
-    if(!ok||!data?.subscription){if(retry){subscriptionAction=null;return fetchSubscription(false);}throw new Error('利用状況を読み込めませんでした。');}
+    if(!ok||!data?.subscription){if(retry){subscriptionAction=null;return fetchSubscription(false);}throw new Error('利用状況を読み込めませんでした。時間をおいて、もう一度開いてください。');}
     const s=data.subscription,str=v=>typeof v==='string'?v.slice(0,200):null,num=v=>Number.isFinite(v)?v:null;
     return {plan:str(s.tier?.name),paid:s.tier?.isPaid===true,percentUsed:num(s.usage?.percentUsed),resetsAt:num(s.usage?.resetsAt),
       statusSubtitle:str(s.statusSubtitle),usageLabel:str(s.usageRowLabel),usageValue:str(s.usageRowValueLabel),
@@ -513,6 +526,59 @@ function setupDesktop({getWindow,localBridge}) {
       upgradeLabel:str(s.entryPointCtaLabel)};
   }
   handle('subscription',()=>fetchSubscription());
+  // Settings > データコントロール: "help improve AI models" (product_improvements.get / .set on the daemon service).
+  handle('training',async()=>{const v=await client.request('GET','/api/product-improvements');return {enabled:v?.training_enabled===true};});
+  handle('set-training',async enabled=>{
+    if(typeof enabled!=='boolean')throw new Error('設定が正しくありません。');
+    const v=await client.request('POST','/api/product-improvements',{training_enabled:enabled});return {enabled:v?.training_enabled===true};
+  });
+  // ---- Dictation, like the web's microphone button: Meta's Voyager ASR over a duplex WebSocket.
+  // The token and socket stay in the main process; the page only streams 16 kHz PCM and gets text back.
+  const dictations=new Map();
+  handle('dictation-start',async()=>{
+    for(const d of dictations.values())d.close();
+    let token;
+    try{
+      const r=await session.defaultSession.fetch('https://muse.ai/api/hatch/voice/voyager-token',{method:'POST',headers:{'Origin':'https://muse.ai'},signal:AbortSignal.timeout(15000)});
+      if(r.ok)token=(await r.json())?.token;
+    }catch{}
+    if(typeof token!=='string'||!token)throw new Error('音声入力を開始できませんでした。Muse へのログイン状態を確認してください。');
+    const id=crypto.randomUUID();
+    const ws=new WebSocket('wss://shortwave.meta.ai/voyager/v1/asr/duplex?sessionId='+encodeURIComponent(id),{origin:'https://muse.ai',handshakeTimeout:15000,maxPayload:1024*1024});
+    const d={ws,accepted:false,queued:[],queuedBytes:0,ending:false,timer:null};
+    const send=value=>emit('dictation',{id,...value});
+    d.close=()=>{clearTimeout(d.timer);try{ws.close();}catch{}};
+    dictations.set(id,d);
+    ws.on('open',()=>ws.send(JSON.stringify({mode:'DEFAULT',authorization:{accessToken:token},audioEncoding:'PCM_16KHZ',model:'prod'})));
+    ws.on('message',(data,binary)=>{
+      if(binary)return;let m;try{m=JSON.parse(String(data));}catch{return;}
+      if(m?.error){send({kind:'error',message:'音声認識でエラーが起きました: '+String(m.error.message||'unknown').slice(0,120)});d.close();return;}
+      if(!d.accepted){
+        if(m?.sessionId!==id)return;
+        d.accepted=true;for(const chunk of d.queued)ws.send(chunk);d.queued=[];d.queuedBytes=0;
+        if(d.ending)ws.send(JSON.stringify({endStream:{}}));
+        send({kind:'ready'});return;
+      }
+      if(m?.transcript)send({kind:m.transcript.final===true?'final':'partial',text:String(m.transcript.transcript??'').slice(0,4000)});
+    });
+    ws.on('error',()=>send({kind:'error',message:'音声認識に接続できませんでした。'}));
+    ws.on('close',()=>{clearTimeout(d.timer);if(dictations.get(id)===d)dictations.delete(id);send({kind:'closed'});});
+    return {id};
+  });
+  handle('dictation-audio',(id,chunk)=>{
+    const d=dictations.get(id);if(!d||d.ending||d.ws.readyState>WebSocket.OPEN)return false;
+    const data=Buffer.from(chunk instanceof ArrayBuffer?new Uint8Array(chunk):chunk);
+    if(!data.length||data.length>65536)return false;
+    if(d.accepted){d.ws.send(data);return true;}
+    if(d.queuedBytes+data.length>128000)return false;
+    d.queued.push(data);d.queuedBytes+=data.length;return true;
+  });
+  handle('dictation-stop',id=>{
+    const d=dictations.get(id);if(!d)return false;
+    d.ending=true;
+    if(d.accepted&&d.ws.readyState===WebSocket.OPEN)d.ws.send(JSON.stringify({endStream:{}}));
+    d.timer=setTimeout(()=>d.close(),8000);return true;
+  });
   handle('set-theme',id=>{
     if(typeof id!=='string'||!/^[\w-]{1,64}$/.test(id))throw new Error('テーマカラーが正しくありません。');
     return client.request('POST','/api/chat/themes/set',{theme_id:id});
