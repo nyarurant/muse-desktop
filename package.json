@@ -1,6 +1,6 @@
 {
   "name": "muse-app",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Muse desktop client with a local conversation UI and direct encrypted gateway connection",
   "main": "src/main.js",

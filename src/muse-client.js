@@ -48,8 +48,10 @@ function errorDetail(body) {
 class MuseClient extends EventEmitter {
   // requireLogin: only connect with credentials obtained from the muse.ai login, and not at all
   // while the website session is logged out.
-  constructor({credentials,fetchJson,checkPin,requireLogin=false}) {
+  constructor({credentials,fetchJson,checkPin,requireLogin=false,locale}) {
     super(); this.credentials=credentials; this.fetchJson=fetchJson; this.checkPin=checkPin; this.requireLogin=requireLogin;
+    // Like the web client, ask the VM for text in the user's language (settings, connectors, permissions).
+    this.locale=typeof locale==='string'&&/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(locale)?locale:'';
     this.pending=new Map(); this.ws=null; this.transport=null; this.connecting=null; this.status='disconnected';
   }
   state(status,message) { this.status=status; this.emit('status',{status,message}); }
@@ -129,7 +131,7 @@ class MuseClient extends EventEmitter {
     let body=Buffer.alloc(0);
     if(verb==='GET') {const q=new URLSearchParams();for(const[k,v]of Object.entries(params))if(Array.isArray(v))for(const x of v)q.append(k,String(x));else if(v!==undefined&&v!==null)q.set(k,String(v));if(q.size)path+='?'+q;}
     else body=Buffer.isBuffer(options.body)?options.body:Buffer.from(JSON.stringify(params));
-    const r=this.transport.request(verb,path,body,[['x-app-id',this.credentials.appId],['Content-Type',options.contentType||'application/json'],['Accept-Encoding','identity']],options.service||0);
+    const r=this.transport.request(verb,path,body,[['x-app-id',this.credentials.appId],['Content-Type',options.contentType||'application/json'],['Accept-Encoding','identity'],...(this.locale?[['Accept-Language',this.locale]]:[])],options.service||0);
     return new Promise((resolve,reject)=>{
       const pending={resolve,reject,path,subscriptionScope:options.subscriptionScope,status:0,chunks:[],size:0,text:'',decoder:new TextDecoder(),onEvent:options.onEvent,stream:!!options.stream,raw:!!options.raw,contentType:'',settled:false};
       pending.timer=setTimeout(()=>{this.cancelRequest(r.id);reject(new Error('Muse の応答がタイムアウトしました。送信済みの可能性があるため、自動再送はしません。'));},options.timeout||30000);

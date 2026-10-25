@@ -39,7 +39,7 @@ function setupDesktop({getWindow,localBridge}) {
   // (it trusts the authenticated gateway). Accept the new key like the web client, but keep a
   // record of every change and tell the user instead of failing silently or blocking.
   let keyChanged=false;
-  const client=new MuseClient({credentials,fetchJson,requireLogin:true,checkPin:(id,fingerprint)=>{
+  const client=new MuseClient({credentials,fetchJson,requireLogin:true,locale:app.getLocale(),checkPin:(id,fingerprint)=>{
     if(pins[id]===fingerprint)return;
     if(pins[id]){
       keyChanged=true;
@@ -404,7 +404,8 @@ function setupDesktop({getWindow,localBridge}) {
   handle('identity',async()=>{
     const r=await client.request('GET','/identity');
     return {name:typeof r?.name==='string'?r.name.slice(0,80):'',themeColor:typeof r?.avatar?.chat_theme_color==='string'?r.avatar.chat_theme_color:'',
-      imagePath:r?.avatar?.image_exists!==false&&typeof r?.avatar?.image_path==='string'?r.avatar.image_path:''};
+      imagePath:r?.avatar?.image_exists!==false&&typeof r?.avatar?.image_path==='string'?r.avatar.image_path:'',
+      videos:avatarVideos(r?.avatar)};
   });
   handle('avatar',async imagePath=>{
     if(typeof imagePath!=='string'||!imagePath||imagePath.length>512)return null;
@@ -416,7 +417,61 @@ function setupDesktop({getWindow,localBridge}) {
     if(!/^image\/(png|jpeg|webp|gif)$/.test(type)||r.data.length>8*1024*1024)throw new Error('アバター画像を表示できません。');
     avatarCache={path:imagePath,url:'data:'+type+';base64,'+r.data.toString('base64')};return avatarCache.url;
   });
+  // Same resolution as the web (resolveHatchAvatarPaths): video_variants win, otherwise
+  // workspace/avatars/<canonical>.mp4 while idle and <canonical>-working.mp4 while working.
+  function avatarVideos(avatar) {
+    if(!avatar||avatar.video_exists===false)return {};
+    const v=avatar.video_variants&&typeof avatar.video_variants==='object'?avatar.video_variants:{};
+    const canonical=typeof avatar.canonical_path==='string'&&/^[\w.-]{1,200}$/.test(avatar.canonical_path)?avatar.canonical_path:'';
+    const pick=(value,fallback)=>typeof value==='string'&&value?value:canonical?fallback:'';
+    return {idle:pick(v.idle,`workspace/avatars/${canonical}.mp4`),working:pick(v.working,`workspace/avatars/${canonical}-working.mp4`)};
+  }
+  const avatarVideoCache=new Map();
+  handle('avatar-video',async videoPath=>{
+    if(typeof videoPath!=='string'||!videoPath||videoPath.length>512)return null;
+    const parts=videoPath.replace(/^\/+/,'').split('/');
+    if(parts.some(p=>!p||p==='.'||p==='..'))throw new Error('アバター動画の場所が正しくありません。');
+    if(avatarVideoCache.has(videoPath))return avatarVideoCache.get(videoPath);
+    const r=await client.request('GET','/fs/raw/'+parts.map(encodeURIComponent).join('/'),{},{raw:true,timeout:60000});
+    const type=String(r.contentType).split(';')[0].trim().toLowerCase();
+    if(!/^video\/(mp4|webm|quicktime)$/.test(type)||r.data.length>40*1024*1024)throw new Error('アバター動画を表示できません。');
+    const value={type,data:r.data};if(avatarVideoCache.size>=4)avatarVideoCache.clear();avatarVideoCache.set(videoPath,value);return value;
+  });
   handle('themes',()=>client.request('GET','/api/chat/themes'));
+  // ---- Settings shared with muse.ai web (same gateway routes, so changes show up in both) ----
+  // Only display fields leave the main process; anything that looks like a credential is dropped.
+  const SECRET_KEY=/token|secret|key|cert|signature|password|credential|cookie|auth/i;
+  function displayFields(value,depth=0) {
+    if(typeof value==='string')return value.slice(0,500);
+    if(typeof value==='number'||typeof value==='boolean'||value===null)return value;
+    if(depth>6||typeof value!=='object')return undefined;
+    if(Array.isArray(value))return value.slice(0,100).map(v=>displayFields(v,depth+1));
+    const out={};for(const [k,v] of Object.entries(value))if(!SECRET_KEY.test(k)){const x=displayFields(v,depth+1);if(x!==undefined)out[k]=x;}
+    return out;
+  }
+  async function settled(promise,pick=v=>v){try{return {ok:true,value:displayFields(pick(await promise))};}catch(e){return {ok:false,error:e.message};}}
+  // Permission settings live on the "sentinel" service, like /approvals (service 1).
+  const permissionRequest=(verb,params)=>client.request(verb,'/permissions/settings',params,{service:1});
+  handle('settings-overview',async()=>{
+    const [permissions,devices,connectors,channels]=await Promise.all([
+      settled(permissionRequest('GET'),v=>({connector_default:v?.connector_default,network_default:v?.network_default,default_content:v?.default_content})),
+      settled(client.request('POST','/api/nodes/list',{}),v=>(v?.nodes??v?.devices??[]).map(n=>({node_id:n.node_id,display_name:n.display_name,platform:n.platform,online:n.online===true,connection_state:n.connection_state,last_seen_at:n.last_seen_at}))),
+      settled(client.request('GET','/connectors',{surface:'settings'}),v=>(Array.isArray(v?.connectors)?v.connectors:[]).map(c=>({id:c.id,name:c.name,description:c.description,state:c.state}))),
+      settled(client.request('GET','/channels/status'),v=>(Array.isArray(v?.channels)?v.channels:[]).map(c=>({provider:c.provider,status:c.status,linked:c.linked===true,enabled:c.enabled===true}))),
+    ]);
+    return {permissions,devices,connectors,channels};
+  });
+  handle('set-theme',id=>{
+    if(typeof id!=='string'||!/^[\w-]{1,64}$/.test(id))throw new Error('テーマカラーが正しくありません。');
+    return client.request('POST','/api/chat/themes/set',{theme_id:id});
+  });
+  // Same body as the web's patchPermissionDefaults; protocols are left out so the server keeps them.
+  handle('set-permission-defaults',async({connector,network}={})=>{
+    const values=['auto_allow','always_ask'];
+    if(!values.includes(connector)||!values.includes(network))throw new Error('アクセス許可の設定が正しくありません。');
+    const v=await permissionRequest('PATCH',{connector_default:connector,network_default:network});
+    return {connector_default:v?.connector_default,network_default:v?.network_default};
+  });
   handle('activity',()=>client.request('GET','/activity',{limit:30,capabilities:['ACTIVITY_FEED_GOALS','ACTIVITY_FEED_PEER_CONVERSATIONS']}));
   handle('open-link',url=>{const u=new URL(url);if(!['https:','http:'].includes(u.protocol))throw new Error('このリンクは開けません。');return shell.openExternal(u.href);});
   handle('markdown',text=>{if(typeof text!=='string'||text.length>1000000)throw new Error('表示する文章が大きすぎます。');return markdown.render(text);});

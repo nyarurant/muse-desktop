@@ -38,7 +38,7 @@ const endpoint=process.argv.find(a=>a.startsWith('--cdp='))?.slice(6)||'http://1
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Narrow view overflows');
     await page.screenshot({path:path.join(artifacts,'muse-compact.png')});
     await page.setViewportSize({width:1250,height:850});await page.locator('#showSidebar').click();
-    const pageCount=context.pages().length;await page.locator('#pcFolder').click();
+    const pageCount=context.pages().length;await page.locator('#tools').click();
     assert(await page.locator('#workspaceView').isVisible(),'Local work page must open inside the main window');
     assert.equal(context.pages().length,pageCount,'Local work must not open another window');
     await page.locator('#railChat').click();

@@ -695,7 +695,7 @@
   }
 
   function bindOpenButtons() {
-    for (const id of ['tools', 'pcSetupSettings']) {
+    for (const id of ['pcSetupSettings']) {
       const button = byId(id);
       if (!button || button.dataset.pcSetupBound === 'true') continue;
       button.dataset.pcSetupBound = 'true';

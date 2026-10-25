@@ -128,6 +128,9 @@ svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width:
 .messages { display: flex; flex-direction: column; gap: 16px; }
 .message { display: flex; align-items: flex-end; gap: 4px; overflow-wrap: anywhere; }
 .message.user { flex-direction: row-reverse; }
+/* Centered time between message groups, like the web. */
+.message.has-time { flex-wrap: wrap; }
+.time-sep { flex-basis: 100%; order: -1; margin: 8px 0 4px; text-align: center; font-size: 12px; line-height: 16px; color: var(--muted); }
 .message + .thinking-row { margin-top: 16px; }
 .bubble { max-width: 85%; min-width: 0; padding: 11px 15px; border-radius: min(22px, 60%); font-size: 16px; line-height: 22px; }
 .assistant .bubble { background: var(--bot-bubble); color: var(--bot-text); }
@@ -160,11 +163,12 @@ svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width:
 
 /* Composer */
 .composer-area { flex-shrink: 0; padding: 0 24px 16px; }
-.pc-bar { max-width: 768px; margin: 0 auto 8px; display: flex; align-items: center; gap: 10px; }
-.pc-toggle { flex-shrink: 0; min-height: 44px; }
-.pc-toggle[aria-pressed="true"] { background: var(--text); color: var(--bg); }
-.pc-hint { font-size: 12px; line-height: 1.5; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
-.pc-bar > .icon-button { flex-shrink: 0; min-width: 44px; min-height: 44px; margin-left: auto; }
+/* PC toggle sits in the composer next to +: muted when off, a green dot when on. */
+.pc-toggle { left: 46px; right: auto; color: var(--muted); }
+.pc-toggle:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.pc-toggle svg { width: 19px; height: 19px; }
+.pc-toggle[aria-pressed="true"] { color: var(--text); }
+.pc-toggle[aria-pressed="true"]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: #31c75d; box-shadow: 0 0 0 2px var(--surface-solid, #2c2c2c); }
 .pc-log { max-width: 768px; margin: 0 auto 10px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 13px; }
 .pc-log > summary { cursor: pointer; min-height: 28px; line-height: 28px; }
 #pcLogEntries { max-height: 180px; overflow: auto; }
@@ -194,8 +198,12 @@ svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width:
 .panel { width: 360px; flex-shrink: 0; position: relative; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--bg); }
 .panel-close { position: absolute; top: 12px; right: 12px; }
 .profile { display: flex; flex-direction: column; align-items: center; padding: 70px 16px 0; }
-.avatar-ring { width: 100px; height: 100px; border-radius: 9999px; overflow: hidden; background: var(--chip); display: flex; align-items: center; justify-content: center; }
+.avatar-ring { position: relative; width: 100px; height: 100px; border-radius: 9999px; overflow: hidden; background: var(--chip); display: flex; align-items: center; justify-content: center; }
 .avatar-ring img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-ring video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.welcome-media { position: relative; width: 100px; height: 100px; }
+.welcome-media:not(:has(img:not([hidden]))) { display: none; }
+.welcome-media video { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 9999px; object-fit: cover; }
 #avatarFallback { font-size: 44px; font-weight: 600; color: var(--muted); }
 .profile-name { margin-top: 8px; font-size: 22px; line-height: 28px; font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-status { display: flex; align-items: center; gap: 6px; max-width: 100%; color: var(--muted); font-size: 14px; line-height: 20px; height: 24px; }
@@ -219,6 +227,71 @@ svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width:
 /* Settings dialog */
 dialog { width: 480px; max-width: calc(100% - 32px); padding: 24px; border: 1px solid var(--line); border-radius: 24px; background: var(--chip); color: var(--text); box-shadow: 0 24px 80px rgba(0, 0, 0, .45); }
 dialog::backdrop { background: rgba(0, 0, 0, .5); }
+/* Settings, laid out like muse.ai web (800x600 two-pane modal, 16px groups, 44px rows) but on the
+   app's own background, so groups get the same gray as the rest of the app (e.g. the local work page). */
+dialog.settings-dialog::backdrop { background: rgba(0, 0, 0, .4); }
+dialog.settings-dialog[open] { animation: settings-in .18s cubic-bezier(.2, .8, .2, 1); }
+@keyframes settings-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+.settings-section:not([hidden]) { animation: settings-fade .14s ease-out; }
+@keyframes settings-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.settings-head h2:focus { outline: none; }
+dialog.settings-dialog { width: 800px; height: min(600px, calc(100vh - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 32px; overflow: hidden; background: var(--bg); }
+.settings-shell { display: flex; height: 100%; }
+.settings-nav { width: 184px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 20px 12px 16px; border-right: 1px solid var(--line); overflow-y: auto; }
+.settings-nav h2 { margin: 0 8px 12px; font-size: 18px; line-height: 26px; font-weight: 600; }
+.settings-nav-item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 6px 8px; border-radius: 12px; font-size: 14px; line-height: 20px; font-weight: 500; text-align: left; }
+.settings-nav-item svg { width: 16px; height: 16px; }
+.settings-nav-item:hover { background: var(--hover); }
+.settings-nav-item.active { background: var(--chip-active); }
+.settings-version { margin-top: auto; padding: 0 8px; font-size: 12px; color: var(--muted); }
+.settings-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 20px 12px; }
+.settings-head h2 { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; }
+.settings-close { background: var(--chip-active); width: 32px; height: 32px; }
+.settings-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 20px 24px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.settings-label { margin: 20px 4px 8px; font-size: 14px; line-height: 20px; font-weight: 600; color: var(--muted); }
+.settings-section > .settings-label:first-child, .settings-section > div:first-child > .settings-label:first-child { margin-top: 0; }
+.settings-intro { margin: 0 4px 12px; font-size: 13px; line-height: 18px; color: var(--muted); }
+.settings-note { margin-top: 12px; }
+.settings-group { padding: 6px; border-radius: 16px; background: var(--chip-active); }
+.settings-group + .settings-group { margin-top: 12px; }
+.settings-row { position: relative; width: 100%; min-height: 44px; display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 12px; text-align: left; font-size: 14px; line-height: 20px; }
+.settings-row + .settings-row::before { content: ""; position: absolute; top: 0; left: 12px; right: 12px; border-top: 1px solid var(--line); }
+button.settings-row:hover { background: var(--hover); }
+.settings-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-row-text strong { font-weight: 500; }
+.settings-row-text span { font-size: 12px; line-height: 16px; color: var(--muted); }
+.settings-value { flex-shrink: 0; font-size: 14px; color: var(--muted); }
+.settings-chevron { width: 16px; height: 16px; color: var(--muted); }
+.settings-row .pill-button { height: 32px; background: var(--chip-active); }
+.settings-row select { height: 32px; padding: 0 10px; border: 0; border-radius: 9999px; background: var(--chip-active); color: var(--text); font: inherit; font-size: 13px; max-width: 220px; }
+.settings-check { width: 18px; height: 18px; flex-shrink: 0; stroke-width: 2.2; opacity: 0; transition: opacity .12s; }
+.settings-choice[aria-checked="true"] .settings-check { opacity: 1; }
+.settings-choice[aria-checked="true"] .settings-row-text strong { font-weight: 600; }
+button.settings-row { transition: background-color .12s; }
+button.settings-row:active { background: var(--chip-active); }
+.settings-group[aria-busy="true"] { opacity: .6; pointer-events: none; transition: opacity .12s; }
+.settings-tile { width: 32px; height: 32px; flex-shrink: 0; display: grid; place-items: center; border-radius: 10px; background: var(--hover); color: var(--muted); font-size: 14px; font-weight: 600; }
+.settings-tile svg { width: 18px; height: 18px; }
+.settings-skeleton { height: 44px; border-radius: 12px; background: linear-gradient(90deg, transparent, var(--hover), transparent); background-size: 200% 100%; animation: settings-shimmer 1.2s linear infinite; }
+.settings-skeleton + .settings-skeleton { margin-top: 2px; }
+@keyframes settings-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { dialog.settings-dialog[open], .settings-section:not([hidden]), .settings-skeleton { animation: none; } }
+.settings-segment { display: flex; gap: 2px; padding: 3px; border-radius: 9999px; background: var(--chip-active); }
+.settings-segment button { width: 30px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 9999px; color: var(--muted); }
+.settings-segment button svg { width: 15px; height: 15px; }
+.settings-segment button[aria-pressed="true"] { background: var(--chip); color: var(--text); }
+.theme-swatches { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 320px; }
+.theme-swatch { width: 22px; height: 22px; border-radius: 50%; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); transition: transform .12s; }
+.theme-swatch:hover { transform: scale(1.12); }
+.theme-swatch img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.theme-swatch[aria-checked="true"] { outline: 2px solid var(--text); outline-offset: 2px; }
+@media (max-width: 720px) {
+  .settings-shell { flex-direction: column; }
+  .settings-nav { width: auto; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px; }
+  .settings-nav h2, .settings-version { display: none; }
+  .settings-nav-item { flex-shrink: 0; }
+}
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; }
 .dialog-heading h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 500; }
 .dialog-description { margin: 12px 0 4px; font-size: 14px; color: var(--muted); }
@@ -263,7 +336,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); }
 .primary-button.danger { background: var(--danger); color: #fff; }
 
 /* Composer: reply target and attachments */
-.composer { padding-left: 52px; }
+.composer { padding-left: 86px; }
 .attach-button { left: 12px; right: auto; color: var(--muted); }
 .attach-button:hover { background: var(--hover); color: var(--text); }
 .attach-button svg { width: 20px; height: 20px; }

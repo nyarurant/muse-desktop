@@ -15,12 +15,12 @@ function controls(){
   const pc=state.pcConnected;
   $('send').disabled=!connected||state.loading||state.connecting||busy()||!!state.pending||(pc&&!!state.pcRun)||(!$('prompt').value.trim()&&(pc||!state.attachments.length));
   $('pcMode').disabled=!connected||!!state.pcRun;
-  $('pcMode').setAttribute('aria-pressed',String(pc));$('pcMode').textContent='このPC: '+(pc?'オン':'オフ');
+  const pcLabel=pc?'このPC: オン（作業フォルダー: '+state.pcWorkspace+'）':'このPC: オフ — 押すと、この会話から PC を操作できます';
+  $('pcMode').setAttribute('aria-pressed',String(pc));$('pcMode').title=pcLabel;$('pcMode').setAttribute('aria-label',pcLabel);
   $('prompt').maxLength=pc?20000:100000;
-  $('pcHint').textContent=pc?'作業フォルダー: '+state.pcWorkspace:'オンにすると、この会話からPCのコマンド・ファイル操作を実行します。';
-  $('pcHint').title=pc?state.pcWorkspace:'';
   renderPcLog();
   $('stop').hidden=!connected||!busy();
+  updateAvatarVideo();
   $('thinking').hidden=!busy();
   $('refresh').disabled=!connected||state.loading;
   $('newChat').disabled=!connected||state.loading||state.connecting;
@@ -34,7 +34,7 @@ function setConnection(status,message){
   state.connected=status==='connected';state.connecting=status==='connecting';
   for(const id of ['connectionDot','sidebarDot'])$(id).className='status-dot '+status;
   $('connectionLabel').textContent=state.connected?'接続済み':state.connecting?'接続中…':'接続する';
-  $('connect').disabled=state.connecting;
+  $('connect').disabled=state.connecting;$('connect').hidden=state.connected;
   $('welcomeDescription').textContent=state.connected?'何でも話しかけてください。':'Muse に接続して、会話を続けましょう。';
   $('welcomeActions').hidden=state.connected;
   if(!state.connected){state.busy.clear();state.pending=null;}
@@ -64,7 +64,7 @@ function applyTheme(){
 function effectiveMode(){const t=document.documentElement.dataset.theme;return t==='light'||(t==='system'&&!darkQuery.matches)?'light':'dark';}
 function setThemeMode(mode,persist=true){
   if(!['dark','light','system'].includes(mode))mode='dark';
-  document.documentElement.dataset.theme=mode;$('themeMode').value=mode;if(persist)remember('museApp.theme',mode);applyTheme();
+  document.documentElement.dataset.theme=mode;if(persist)remember('museApp.theme',mode);applyTheme();
 }
 darkQuery.addEventListener('change',applyTheme);
 async function loadIdentity(){
@@ -78,6 +78,27 @@ async function loadIdentity(){
   if(identity.imagePath){
     try{const url=await call('avatar',identity.imagePath);if(url){for(const id of ['avatarImage','welcomeAvatar']){$(id).src=url;$(id).hidden=false;}$('avatarFallback').hidden=true;}}catch{}
   }
+  loadAvatarVideos(identity.videos||{}).catch(()=>{});
+}
+// Like the web, the avatar is a looping muted video: idle normally, the working clip while Muse works.
+// The still image stays underneath as the fallback.
+const avatarClips={idle:null,working:null};let avatarShown='';
+async function loadAvatarClip(kind,path){
+  if(!path){avatarClips[kind]=null;return;}
+  if(avatarClips[kind]?.path===path)return;
+  const v=await call('avatarVideo',path).catch(()=>null);
+  const old=avatarClips[kind];
+  avatarClips[kind]=v?.data?{path,url:URL.createObjectURL(new Blob([v.data],{type:v.type}))}:null;
+  if(old)URL.revokeObjectURL(old.url);
+}
+async function loadAvatarVideos(videos){
+  await loadAvatarClip('idle',videos.idle);avatarShown='';updateAvatarVideo();
+  await loadAvatarClip('working',videos.working);updateAvatarVideo();
+}
+function updateAvatarVideo(){
+  const clip=(state.busy.get(state.selected)===true||!!state.pcRun)&&avatarClips.working||avatarClips.idle;
+  const url=clip?.url||'';if(url===avatarShown)return;avatarShown=url;
+  for(const id of ['avatarVideo','welcomeVideo']){const el=$(id);if(url){el.src=url;el.hidden=false;el.play().catch(()=>{});}else{el.removeAttribute('src');el.hidden=true;}}
 }
 
 // ---- Conversation list ----
@@ -259,6 +280,16 @@ async function deleteMessage(m){
   await call('deleteMessage',m.id);
   state.messages=state.messages.filter(x=>x.id!==m.id);await renderMessages();scheduleHistory();
 }
+function timeLabel(m,prev){
+  if(!m.time||m.pending)return '';
+  const d=new Date(m.time),p=prev?.time?new Date(prev.time):null;
+  if(p&&d-p<30*60000&&d.toDateString()===p.toDateString())return '';
+  const time=d.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}),today=new Date();
+  if(d.toDateString()===today.toDateString())return time;
+  const yesterday=new Date(today);yesterday.setDate(today.getDate()-1);
+  if(d.toDateString()===yesterday.toDateString())return '昨日 '+time;
+  return d.toLocaleDateString('ja-JP',d.getFullYear()===today.getFullYear()?{month:'numeric',day:'numeric'}:{year:'numeric',month:'numeric',day:'numeric'})+' '+time;
+}
 async function renderMessages({forceBottom=false}={}){
   const version=++state.renderId,transcript=$('transcript'),nearBottom=transcript.scrollHeight-transcript.scrollTop-transcript.clientHeight<140;
   const messages=state.messages.slice();
@@ -292,8 +323,10 @@ async function renderMessages({forceBottom=false}={}){
     const filesKey=m.pending?'pending:'+(state.pending?.files?.length||0):JSON.stringify([m.resources,m.attachments]);
     if(article.filesKey!==filesKey){article.filesKey=filesKey;renderResources(article,m);}
     article.querySelector('.bubble').hidden=!m.content&&!!m.attachments?.length;
-    article.className='message '+m.role+(m.pending?' pending':'');
+    article.className='message '+m.role+(m.pending?' pending':'')+(article.timeLabel?' has-time':'');
     if(article.message?.time!==m.time&&m.time){const d=new Date(m.time);article.querySelector('.bubble').title=d.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+    const label=timeLabel(m,updates[i-1]?.m);
+    if(article.timeLabel!==label){article.timeLabel=label;let sep=article.querySelector(':scope > .time-sep');if(label){if(!sep){sep=document.createElement('div');sep.className='time-sep';article.prepend(sep);}sep.textContent=label;}else sep?.remove();article.classList.toggle('has-time',!!label);}
     article.message=m;
     if(host.children[i]!==article)host.insertBefore(article,host.children[i]||null);
   }
@@ -595,7 +628,6 @@ $('pcMode').addEventListener('click',safely(async()=>{
   controls();$('prompt').focus();
 }));
 window.onPcSetupConnected=()=>{refreshPcState().catch(()=>{});};
-$('pcFolder').addEventListener('click',()=>showPage('workspace'));
 window.addEventListener('focus',()=>{refreshPcState().catch(()=>{});});
 // ---- Login screen (login is required; the main process places Meta's page over #loginFrame) ----
 const LOGIN_STEPS=['waiting','session','token','ready'];
@@ -734,7 +766,7 @@ mainEl.addEventListener('drop',e=>{mainEl.classList.remove('dragging');const fil
 $('prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();safely(send)();}});
 $('composerForm').addEventListener('submit',e=>{e.preventDefault();safely(send)();});
 $('stop').addEventListener('click',safely(async()=>{await call('cancel',state.selected);notice('停止を要求しました。Muse の実行状態を確認しています。');scheduleHistory();}));
-$('connect').addEventListener('click',safely(async()=>{if(state.connected)$('settingsDialog').showModal();else await connect();}));
+$('connect').addEventListener('click',safely(async()=>{if(state.connected)openSettings();else await connect();}));
 $('welcomeConnect').addEventListener('click',safely(connect));
 for(const id of ['login','welcomeLogin'])$(id).addEventListener('click',safely(()=>call('login')));
 $('reconnect').addEventListener('click',safely(async()=>{$('settingsDialog').close();await connect();}));
@@ -745,7 +777,7 @@ $('sidebarOptions').addEventListener('click',e=>{const b=e.currentTarget;showMen
 $('sidebarOptions').setAttribute('aria-haspopup','menu');
 $('transcript').addEventListener('scroll',closeMenu,{passive:true});
 $('newChat').addEventListener('click',safely(async()=>{const result=await call('startSession');const id=result.session_id;if(!id)throw new Error('新しい会話の ID を取得できませんでした。');state.draftSessions.add(id);await refreshSessions();await select(id);}));
-$('settings').addEventListener('click',()=>$('settingsDialog').showModal());
+$('settings').addEventListener('click',()=>openSettings());
 $('closeSettings').addEventListener('click',()=>$('settingsDialog').close());
 $('settingsDialog').addEventListener('click',e=>{if(e.target===$('settingsDialog')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.target.close();}});
 $('dismissNotice').addEventListener('click',()=>$('notice').hidden=true);
@@ -766,7 +798,6 @@ setPanel(recall('museApp.panel')!=='closed'&&window.innerWidth>1180,false);
 window.matchMedia('(max-width: 1180px)').addEventListener('change',e=>setPanel(!e.matches&&recall('museApp.panel')!=='closed',false));
 window.matchMedia('(max-width: 860px)').addEventListener('change',e=>document.body.classList.toggle('sidebar-hidden',e.matches));
 setThemeMode(recall('museApp.theme')||'dark',false);
-$('themeMode').addEventListener('change',e=>setThemeMode(e.target.value));
 $('approvalMode').addEventListener('change',safely(async e=>{const el=e.target;try{el.value=await call('setApprovalMode',el.value);}catch(err){el.value=await call('approvalMode');throw err;}}));
 safely(async()=>{$('approvalMode').value=await call('approvalMode');})();
 $('autoResume').addEventListener('change',safely(async e=>{const el=e.target;el.value=await call('setAutoResume',el.value==='on')?'on':'off';}));
