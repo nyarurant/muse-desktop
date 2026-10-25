@@ -1,19 +1,30 @@
-# Muse Desktop Community 0.5.5（非公式）
+# Muse Desktop Community
 
-Muse と会話するための、**非公式**の Windows デスクトップアプリです。
+[Muse](https://muse.ai/) と会話するための、**非公式**の Windows デスクトップアプリです（Windows 10 / 11）。
 
 > **注意:** このプロジェクトは Meta Platforms, Inc. とは関係がなく、Meta による承認・保証・サポートを受けていません。「Muse」「Meta」は各社の商標です。
 > 公開 API ではなく、muse.ai の Web 版が内部で使っている通信や仕組みを読み解いて使っています。Meta 側の変更でいつでも動かなくなる可能性があり、利用規約上の扱いも保証できません。**自己責任で**使ってください。
 > PC 連携を有効にすると、Muse（Meta のサーバー上の AI）がこの PC のコマンドやファイルを扱えるようになります。内容を理解したうえで使ってください。
+
 会話画面はアプリ内の HTML/CSS/JavaScript で描画し、muse.ai の Web 版と同じゲートウェイ API を使って、Muse の VM と Noise XX で暗号化した通信を直接行います。
+
+## インストール
+
+配布用のビルドはまだないので、ソースからビルドします（Node.js が必要です）。
+
+```powershell
+npm.cmd install
+npm.cmd run dist:win       # インストーラー: dist/Muse Desktop Community Setup <version>.exe
+npm.cmd run dist:portable  # ポータブル版: dist/Muse Desktop Community <version>.exe
+```
+
+できた exe を動かすだけなら Node.js は要りません。コード署名はしていないので、初回は Windows SmartScreen の警告が出ます（「詳細情報」→「実行」）。
 
 ## 使い方
 
-`npm.cmd run dist:win` で作る `dist/Muse Desktop Community Setup 0.5.5.exe` でインストールするか、`npm.cmd run dist:portable` で作る `dist/Muse Desktop Community 0.5.5.exe`（インストール不要のポータブル版）を起動します。Node.js のインストールは不要です。コード署名はしていないので、初回は Windows SmartScreen の警告が出ます。
 ログインは必須です。ログインしていないと、アプリの画面全体がログイン画面になり、その中に表示される Meta のページで Muse アカウントにログインします（入力した内容はアプリには渡りません）。完了すると自動で接続し、いつもの画面に戻ります。
 接続のたびに新しいトークンを取り直すので、ログインしたままなら接続が切れても自動で戻ります。ログインが切れたときは、またログイン画面になります。
-接続情報は Windows の暗号化ストレージで暗号化し、`%APPDATA%/Muse App/muse-session.enc` に保存します。DevTools の通信記録（`.devtools` / `.har`）からの接続はできません（開発用の `npm.cmd run test:live` だけが使います）。
-Meta の公式アプリではありません。設定などの保存先は `%APPDATA%/Muse App` です（旧名のまま）。
+接続情報は Windows の暗号化ストレージで暗号化し、`%APPDATA%/Muse App/muse-session.enc` に保存します。設定なども `%APPDATA%/Muse App` に保存します。
 
 ## 機能
 
@@ -72,7 +83,14 @@ npm.cmd run test:live -- --har="C:/path/to/capture.devtools"
 アプリを `--remote-debugging-port=9337` 付きで起動しておくと、`npm.cmd run test:ui` で画面の動作（履歴、送信と返信、下書き、設定の全セクションと利用状況、ライブラリ、ローカル作業、アクティビティ、狭い画面）を確認できます。
 この確認では新しいサイドチャットから実際に 1 通メッセージを送り、終わったらそのサイドチャットをアーカイブします。
 
-ファイル構成: `main.js` が Electron のメインプロセス、`desktop-api.js` が画面との IPC、`muse-client.js` が API クライアント、`noise.js` が暗号化通信、`app.html` / `app.css` / `app-renderer.js` が会話画面です。
-承認の自動判定は `muse-approval-policy.js`、自動再開の判定は `auto-resume.js` にあります。PC の認証は `pc-auth.js`、端末通信は `native-device.js`、ローカルの実行は `native-executor.js`、ログイン検出は `login-flow.js` です。
+ファイル構成（`src/`）:
 
-Meta とは関係のないコミュニティ製のプロトタイプです。
+- `main.js`: Electron のメインプロセス、`desktop-api.js`: 画面との IPC と Muse への各種リクエスト
+- `muse-client.js`: ゲートウェイ API クライアント、`noise.js`: 暗号化通信、`chat-model.js`: 会話データの整形
+- `app.html` / `app.css` / `app-renderer.js`: 会話画面。`settings-renderer.js`（設定）、`workspace-renderer.js`（ローカル作業）、`activity-renderer.js`（アクティビティ詳細）、`dictation-renderer.js`（音声入力）、`pc-setup-renderer.js`（PC 接続の設定）
+- `pc-auth.js` / `pc-auth-store.js`: PC の認証、`native-device.js`: 端末通信、`native-executor.js`: PC での実行、`pc-safety.js`: 危険な操作の判定
+- `muse-approval-policy.js`: 自動許可の判定、`auto-resume.js`: 自動再開の判定、`login-flow.js`: ログイン検出
+
+## ライセンス
+
+MIT License（[LICENSE](LICENSE)）。
