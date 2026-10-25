@@ -477,7 +477,8 @@ function dayLabel(d){
   return diff===0?'今日':diff===1?'昨日':d.toLocaleDateString('ja-JP',{month:'long',day:'numeric'});
 }
 function activityNode(a){
-  const item=document.createElement('div');item.className='activity-item';
+  const item=document.createElement('button');item.type='button';item.className='activity-item';
+  item.addEventListener('click',()=>window.openActivity?.(a));
   const done=!a.status||DONE.has(a.status);
   const iconBox=document.createElement('span');iconBox.className='activity-icon';iconBox.append(icon(/^file_/.test(a.type||'')?'file':done?'check':'spark'));
   const text=document.createElement('div');text.className='activity-text';
