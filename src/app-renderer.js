@@ -838,8 +838,8 @@ window.matchMedia('(max-width: 860px)').addEventListener('change',e=>document.bo
 setThemeMode(recall('museApp.theme')||'dark',false);
 $('approvalMode').addEventListener('change',safely(async e=>{const el=e.target;try{el.value=await call('setApprovalMode',el.value);}catch(err){el.value=await call('approvalMode');throw err;}}));
 safely(async()=>{$('approvalMode').value=await call('approvalMode');})();
-$('autoResume').addEventListener('change',safely(async e=>{const el=e.target;el.value=await call('setAutoResume',el.value==='on')?'on':'off';}));
-safely(async()=>{$('autoResume').value=await call('autoResume')?'on':'off';})();
+$('autoResume').addEventListener('click',safely(async()=>{const sw=$('autoResume'),next=sw.getAttribute('aria-checked')!=='true';sw.disabled=true;try{sw.setAttribute('aria-checked',String(!!await call('setAutoResume',next)));}finally{sw.disabled=false;}}));
+safely(async()=>{$('autoResume').setAttribute('aria-checked',String(!!await call('autoResume')));})();
 renderApprovals();
 refreshPcState().catch(()=>{});
 safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);const login=await call('loginState');if(login.active)enterLogin(login.stage,login.message);else if(info.hasSession)await connect();else await call('login');})();
