@@ -1,112 +1,586 @@
 'use strict';
-// Lets Muse live in her 3D desktop body (kaguya-companion) by her own choice: things that happen to the
-// body or around the PC are told to her in a dedicated side chat, and she moves the body herself with the
-// PC commands companion.act / companion.info. Nothing here moves the body.
-//
-// Told: clicks on her, the cursor resting on her, dozing off and being woken, a full-screen app (a game)
-// starting and ending (from the companion), the
-// user coming back after 10+ minutes away (system idle time, so games and keyboards count), and a check-in
-// every 5 minutes while the user is around. Several events within a minute go out as one message.
+
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
+const { waitForReply: defaultWaitForReply } = require('./agent-reply');
 
 const COMPANION = 'http://127.0.0.1:38741';
-const POLL_MS = 3000;
-const MIN_GAP_S = 60; // between messages
-const CHECKIN_S = 300; // check-in while the user is around
-const AWAY_S = 600; // idle this long = away
+const DEFAULTS = Object.freeze({
+  pollMs: 3000,
+  urgentGapS: 5,
+  checkinS: 300,
+  awayS: 600,
+  captureGapS: 90,
+  replyTimeoutMs: 15000,
+  replyPollMs: 1000,
+  retryBaseS: 2,
+  retryMaxS: 60,
+});
 
-function describe(e) {
-  switch (e.type) {
-    case 'click': return e.part === 'head' ? 'ユーザーに頭をクリックされた' : 'ユーザーに身体をクリックされた';
-    case 'hover': return 'ユーザーのカーソルがしばらく身体の上に乗っている';
-    case 'doze': return '放っておかれて、うとうとし始めた';
-    case 'woke': return 'ユーザーがマウスを動かして、居眠りから起こされた';
-    case 'returned': return `ユーザーが ${e.minutes} 分ぶりに PC に戻ってきた`;
-    case 'game-start': return 'ユーザーが全画面のアプリ（ゲームや動画）を使い始めた。身体は画面の下に隠れて、ときどき隅からひょこっと出る（話しかけたり表情を出したりすると、そのときも出る）';
-    case 'game-end': return 'ユーザーが全画面のアプリを閉じた。身体はいつもの場所に戻った';
-    case 'checkin': return e.idle < 60 ? '（定期）ユーザーは PC を操作中' : `（定期）ユーザーは ${Math.round(e.idle / 60)} 分ほど PC を触っていない`;
-    default: return null;
+const GAME_TYPES = new Set(['game-start', 'game-end', 'game-peek']);
+const CAPTURE_TYPES = new Set(['game-start', 'game-peek']);
+
+const PRIORITY = Object.freeze({
+  'game-start': 0,
+  'game-end': 0,
+  click: 1,
+  hover: 1,
+  doze: 1,
+  woke: 1,
+  returned: 1,
+  'game-peek': 2,
+  checkin: 3,
+});
+
+function secondsNow() {
+  return Date.now() / 1000;
+}
+
+function describe(event) {
+  switch (event?.type) {
+    case 'click':
+      return event.part === 'head' ? 'ユーザーに頭をクリックされた。' : 'ユーザーに身体をクリックされた。';
+    case 'hover':
+      return 'ユーザーのカーソルがしばらく身体の上にある。';
+    case 'doze':
+      return 'ユーザーが席を離れたので、少し眠くなってきた。';
+    case 'woke':
+      return 'ユーザーが戻ってきたので、目を覚ました。';
+    case 'returned':
+      return `ユーザーが ${Math.max(1, Number(event.minutes) || 1)} 分ぶりに PC に戻ってきた。`;
+    case 'game-start':
+      return 'ユーザーのゲームが始まった。';
+    case 'game-end':
+      return 'ユーザーのゲームが終わった。';
+    case 'game-peek':
+      return 'ユーザーはゲーム中で、今の画面を見ている。';
+    case 'checkin':
+      return Number(event.idle) < 60
+        ? 'ユーザーは PC を操作中。'
+        : `ユーザーは ${Math.max(1, Math.round(Number(event.idle) / 60) || 1)} 分ほど PC を操作していない。`;
+    default:
+      return null;
   }
 }
 
-function createCompanionLink({ dataDir, send, rename, sessions, title = async () => 'Muse の身体', idleSeconds, log = () => {} }) {
+function promptFor(events, hasImage) {
+  const lines = [...new Set(events.map(describe).filter(Boolean))];
+  const context = lines.length ? lines.join('\n') : 'ユーザーの様子を確認した。';
+  const imageHint = hasImage
+    ? '添付画像は今のゲーム画面です。見えている内容に触れてください。'
+    : '画面の内容が分からないときは、分からないことを短く自然に伝えてください。';
+  return [
+    'あなたはデスクトップの隅にいる Kaguya です。',
+    context,
+    imageHint,
+    '吹き出しに表示する短い自然な日本語を1文だけ返してください（目安80文字以内）。',
+    '返信は自動で吹き出しに転送されます。companion.act、companion.info、say、コードブロック、ツール呼び出しは使わないでください。',
+  ].join('\n');
+}
+
+function canonicalBubbleText(value) {
+  let text = typeof value === 'string' ? value.trim() : '';
+  if (!text || /```|\b(?:local-tool|tool_call|function_call)\b|companion\.(?:act|info)\b|<tool(?:[_>]|\b)|^\s*\{[^\n]*(?:"(?:tool|action|command)"\s*:)/i.test(text)) return null;
+  if (/^\s*(?:assistant|kaguya)\s*[:：]/i.test(text)) text = text.replace(/^\s*(?:assistant|kaguya)\s*[:：]\s*/i, '');
+  text = text.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return [...text].slice(0, 200).join('');
+}
+
+function eventAt(event, fallback) {
+  const at = typeof event?.at === 'string' && !/^[-+]?\d+(?:\.\d+)?$/.test(event.at)
+    ? Date.parse(event.at)
+    : Number(event?.at);
+  if (!Number.isFinite(at)) return fallback;
+  // The companion historically emitted Date.now() milliseconds; normalize
+  // those values so they can be compared with the link's seconds clock.
+  return Math.abs(at) > 1e11 ? at / 1000 : at;
+}
+
+function normalizeEvent(raw, now) {
+  if (!raw || typeof raw.type !== 'string' || !raw.type) return null;
+  const event = { ...raw, type: raw.type };
+  if (raw.at !== undefined) event.at = eventAt(raw, now);
+  return event;
+}
+
+function eventId(event) {
+  if (event?.id !== undefined && event?.id !== null && String(event.id) !== '') return String(event.id);
+  const details = ['part', 'minutes', 'idle', 'at'].map((key) => `${key}=${event?.[key] ?? ''}`).join('&');
+  return `${event?.type || 'unknown'}:${details}`;
+}
+
+function attachmentIsUsable(attachment) {
+  return !!attachment
+    && attachment.type === 'image'
+    && typeof attachment.mime_type === 'string'
+    && /^image\/(?:jpeg|png|webp)$/i.test(attachment.mime_type)
+    && typeof attachment.data_base64 === 'string'
+    && /^[A-Za-z0-9+/]*={0,2}$/.test(attachment.data_base64)
+    && attachment.data_base64.length > 0
+    && typeof attachment.filename === 'string'
+    && attachment.filename.length > 0;
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  const ms = Math.max(1, Number(timeoutMs) || 1);
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+function safeErrorMessage(error) {
+  const value = error?.message || String(error || 'failed');
+  return value
+    .replace(/(?:authorization|cookie|secret|token|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/[A-Za-z0-9+/]{80,}={0,2}/g, '[redacted]')
+    .slice(0, 160);
+}
+
+function createCompanionLink({
+  dataDir,
+  send,
+  rename = async () => {},
+  sessions,
+  history,
+  replyClient,
+  waitForReply = defaultWaitForReply,
+  subscribeAgent,
+  closeAgentSubscription,
+  captureGame,
+  gameState,
+  say,
+  title = async () => 'Kaguya の身体',
+  idleSeconds = () => 0,
+  log = () => {},
+  fetchEvents,
+  now = secondsNow,
+  randomUUID = () => crypto.randomUUID(),
+  options = {},
+} = {}) {
+  if (typeof dataDir !== 'string' || !dataDir) throw new Error('companion link data directory is required');
+  if (typeof send !== 'function') throw new Error('companion link send function is required');
+  const cfg = { ...DEFAULTS, ...options };
   const file = path.join(dataDir, 'companion-link.json');
   let state = { enabled: true, sessionId: '' };
-  try { state = { ...state, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { /* first run */ }
-  const save = () => { try { fs.writeFileSync(file, JSON.stringify(state)); } catch (e) { log('companion-link save', e.message); } };
+  try {
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (saved && typeof saved === 'object') state = { ...state, ...saved };
+  } catch { /* first run */ }
+  if (typeof state.sessionId !== 'string') state.sessionId = '';
 
-  let timer = null, lastEventId = null, pending = [], lastSentAt = 0, lastCheckinAt = Date.now() / 1000;
-  let away = false, awaySince = 0, sending = false, companionUp = false, backoffUntil = 0;
+  const save = () => {
+    try { fs.writeFileSync(file, JSON.stringify({ enabled: state.enabled, sessionId: state.sessionId })); }
+    catch (error) { log('companion-link save', error?.message || 'save failed'); }
+  };
 
-  async function poll() {
-    const now = Date.now() / 1000;
-    if (now < backoffUntil) return;
-    // Events from the companion (the first poll only learns where the queue is).
+  let timer = null;
+  let initialized = false;
+  let lastEventId = null;
+  let eventSourceId = null;
+  let eventGeneration = 0;
+  let seenEventKeys = new Set();
+  let pending = [];
+  let lastSentAt = Number.NEGATIVE_INFINITY;
+  let lastCheckinAt = now();
+  let lastCaptureAt = Number.NEGATIVE_INFINITY;
+  let away = false;
+  let awaySince = 0;
+  let sending = false;
+  let companionUp = false;
+  let pollBackoffUntil = 0;
+  let sendBackoffUntil = 0;
+  let sendFailures = 0;
+  let pollFailures = 0;
+  let game = { active: false, at: Number.NEGATIVE_INFINITY, id: null, synthetic: false };
+  let draftSessionId = '';
+  let draftSessionTitle = '';
+  let lastReplyAt = Number.NEGATIVE_INFINITY;
+  let lastSpokenAt = Number.NEGATIVE_INFINITY;
+  let lastError = '';
+  let retainedCapture = null;
+  const spoken = new Set();
+
+  const requestEvents = fetchEvents || (async (after) => {
+    const response = await fetch(`${COMPANION}/events?after=${encodeURIComponent(after)}`, { signal: AbortSignal.timeout(2000) });
+    if (!response.ok) throw new Error(`events HTTP ${response.status}`);
+    return response.json();
+  });
+
+  async function reconcileGame(currentTime) {
+    if (typeof gameState !== 'function') return false;
     try {
-      const r = await fetch(`${COMPANION}/events?after=${lastEventId ?? -1}`, { signal: AbortSignal.timeout(2000) });
-      const data = await r.json();
-      companionUp = true;
-      if (lastEventId !== null) for (const e of data.events || []) pending.push(e);
-      lastEventId = data.last ?? lastEventId ?? 0;
-    } catch {
-      companionUp = false; backoffUntil = now + 30; return;
+      const value = await gameState();
+      if (value?.active !== true) return false;
+      const id = `state:${String(value.windowId || value.displayId || 'active')}`;
+      // The state endpoint has no event timestamp. Keep this marker separate
+      // so an actual end/peek event emitted during the next polling interval
+      // is accepted even when its timestamp is a few seconds before now.
+      game = { active: true, at: currentTime, id, synthetic: true };
+      enqueue({ type: 'game-start', id, at: currentTime, source: 'state' }, currentTime);
+      return true;
+    } catch (error) {
+      logFailure('game-state', error);
+      return false;
     }
-    // Coming back after being away, and check-ins while the user is around.
-    const idle = idleSeconds();
-    if (!away && idle >= AWAY_S) { away = true; awaySince = now - idle; }
-    if (away && idle < 5) { away = false; pending.push({ type: 'returned', minutes: Math.round((now - awaySince) / 60) }); }
-    if (!away && now - lastCheckinAt >= CHECKIN_S) {
-      lastCheckinAt = now;
-      if (!pending.length && now - lastSentAt >= CHECKIN_S / 2) pending.push({ type: 'checkin', idle });
-    }
-    if (pending.length && !sending && now - lastSentAt >= MIN_GAP_S) await flush(now);
   }
 
-  async function flush(now) {
-    const lines = [...new Set(pending.map(describe).filter(Boolean))];
+  function logFailure(kind, error) {
+    const message = safeErrorMessage(error);
+    lastError = `${kind}: ${message}`;
+    log(`companion-link ${kind}`, message);
+  }
+
+  function resetEventGeneration() {
+    eventGeneration += 1;
+    seenEventKeys = new Set();
+    game = { active: false, at: Number.NEGATIVE_INFINITY, id: null, synthetic: false };
+    // Event IDs are scoped to the companion process. Do not replay notifications
+    // from the previous process after a source/cursor reset.
     pending = [];
-    if (!lines.length) return;
-    const time = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-    const text = [
-      `[からだ ${time}]`,
-      ...lines.map((l) => `- ${l}`),
-      '身体は companion.act で動かせる（名前の一覧は companion.info）。反応したいときだけ、好きなように。返事の文章は短くていいよ。',
-    ].join('\n');
+    retainedCapture = null;
+  }
+
+  function eventKey(event) {
+    return `${eventGeneration}:${eventId(event)}`;
+  }
+
+  function enqueue(event, currentTime) {
+    const key = eventKey(event);
+    if (seenEventKeys.has(key)) return false;
+    seenEventKeys.add(key);
+    if (seenEventKeys.size > 1024) seenEventKeys = new Set([...seenEventKeys].slice(-512));
+    if (event.type === 'checkin' && pending.some((item) => item.event.type === 'checkin')) return false;
+    pending.push({ event, key, queuedAt: currentTime, priority: PRIORITY[event.type] ?? 2 });
+    return true;
+  }
+
+  function acceptEvent(raw, currentTime) {
+    const event = normalizeEvent(raw, currentTime);
+    if (!event) return false;
+    const at = eventAt(event, currentTime);
+    if (event.type === 'game-start') {
+      if (game.active) {
+        if (game.synthetic) game = { ...game, id: event.id ?? game.id, synthetic: false };
+        return false;
+      }
+      if (at < game.at) return false;
+      game = { active: true, at, id: event.id ?? null, synthetic: false };
+      return enqueue(event, currentTime);
+    }
+    if (event.type === 'game-end') {
+      // A close event without a matching accepted start is the false-close case.
+      if (!game.active || (!game.synthetic && at < game.at)) return false;
+      game = { active: false, at, id: event.id ?? null, synthetic: false };
+      return enqueue(event, currentTime);
+    }
+    if (event.type === 'game-peek') {
+      if (!game.synthetic && at < game.at) return false;
+      // A link may start after game-start; a fresh periodic peek is enough to
+      // establish that the companion is currently in game mode.
+      if (!game.active) game = { active: true, at, id: event.id ?? null, synthetic: false };
+      else if (game.synthetic) game = { active: true, at, id: event.id ?? game.id, synthetic: false };
+      return enqueue(event, currentTime);
+    }
+    return enqueue(event, currentTime);
+  }
+
+  async function updateEvents(currentTime) {
+    const after = lastEventId === null ? -1 : lastEventId;
+    const data = await requestEvents(after);
+    const rows = Array.isArray(data?.events) ? data.events : [];
+    const reportedLast = Number(data?.last);
+    const source = typeof data?.sourceId === 'string' && data.sourceId ? data.sourceId
+      : typeof data?.source_id === 'string' && data.source_id ? data.source_id : null;
+    const numericIds = rows.map((event) => Number(event?.id)).filter(Number.isFinite);
+    const reset = (initialized && eventSourceId && source && source !== eventSourceId)
+      || (lastEventId !== null && Number.isFinite(reportedLast) && reportedLast < Number(lastEventId))
+      || (lastEventId !== null && numericIds.some((id) => id < Number(lastEventId)));
+    if (reset) {
+      resetEventGeneration();
+      lastEventId = null;
+      await reconcileGame(currentTime);
+    }
+    if (source) eventSourceId = source;
+    if (!initialized) {
+      initialized = true;
+      lastEventId = Number.isFinite(reportedLast) ? reportedLast : lastEventId;
+      await reconcileGame(currentTime);
+      return;
+    }
+    for (const event of rows) acceptEvent(event, currentTime);
+    if (Number.isFinite(reportedLast)) lastEventId = reportedLast;
+    else if (numericIds.length) lastEventId = Math.max(...numericIds);
+  }
+
+  function updateIdle(currentTime) {
+    let idle = 0;
+    try { idle = Math.max(0, Number(idleSeconds()) || 0); } catch { idle = 0; }
+    if (!away && idle >= cfg.awayS) {
+      away = true;
+      awaySince = currentTime - idle;
+    }
+    if (away && idle < 5) {
+      away = false;
+      enqueue({ type: 'returned', minutes: Math.max(1, Math.round((currentTime - awaySince) / 60)) }, currentTime);
+    }
+    if (!away && currentTime - lastCheckinAt >= cfg.checkinS && !pending.some((item) => item.event.type === 'checkin')) {
+      enqueue({ type: 'checkin', idle }, currentTime);
+    }
+  }
+
+  function selectBatch() {
+    const ordered = [...pending].sort((a, b) => a.priority - b.priority || a.queuedAt - b.queuedAt);
+    const lines = [];
+    for (const item of ordered) {
+      const line = describe(item.event);
+      if (line && !lines.includes(line)) lines.push(line);
+    }
+    return { items: ordered, lines };
+  }
+
+  function due(currentTime) {
+    if (!pending.length || sending || currentTime < sendBackoffUntil) return false;
+    return currentTime - lastSentAt >= cfg.urgentGapS;
+  }
+
+  function markDelivered(items) {
+    const keys = new Set(items.map((item) => item.key));
+    pending = pending.filter((item) => !keys.has(item.key));
+    if (retainedCapture && [...retainedCapture.keys].every((key) => keys.has(key))) retainedCapture = null;
+  }
+
+  async function ensureSession() {
+    if (state.sessionId) return { id: state.sessionId, fresh: state.sessionId === draftSessionId, name: draftSessionTitle };
+    const name = await title().catch(() => 'Kaguya の身体');
+    if (sessions) {
+      const list = await sessions().catch(() => null);
+      const rows = Array.isArray(list) ? list : list?.sessions || [];
+      const found = rows.find((row) => row && !row.is_primary && String(row.title || '').trim() === name);
+      const foundId = found?.session_id || found?.id;
+      if (foundId) {
+        state.sessionId = String(foundId);
+        save();
+        return { id: state.sessionId, fresh: false, name };
+      }
+    }
+    const id = randomUUID();
+    draftSessionId = id;
+    draftSessionTitle = name;
+    state.sessionId = id;
+    save();
+    return { id, fresh: true, name };
+  }
+
+  async function baselineFor(id, fresh) {
+    if (fresh || typeof history !== 'function') return new Set();
+    const result = await history(id);
+    const baseline = new Set();
+    for (const event of result?.chat_events || []) {
+      const messageId = event?.message_id || event?.payload?.message_id || event?.id;
+      if (typeof messageId === 'string' && messageId) baseline.add(messageId);
+    }
+    return baseline;
+  }
+
+  async function captureIfDue(items, currentTime) {
+    if (!captureGame) return null;
+    const captureItems = items.filter((item) => CAPTURE_TYPES.has(item.event.type));
+    if (!captureItems.length) return null;
+    if (retainedCapture && captureItems.some((item) => retainedCapture.keys.has(item.key))) {
+      return retainedCapture.attachment;
+    }
+    if (!game.active) return null;
+    if (currentTime - lastCaptureAt < cfg.captureGapS) return null;
+    try {
+      const result = await captureGame();
+      if (!result || result.status === 409 || result.capture === false) return null;
+      const attachment = result.attachment || result;
+      if (!attachmentIsUsable(attachment)) return null;
+      lastCaptureAt = currentTime;
+      retainedCapture = { keys: new Set(captureItems.map((item) => item.key)), attachment };
+      return attachment;
+    } catch (error) {
+      logFailure('capture', error);
+      return null;
+    }
+  }
+
+  async function relayReply(reply, sessionId) {
+    if (!say || !reply) return;
+    lastReplyAt = now();
+    const text = canonicalBubbleText(reply.text);
+    if (!text) return;
+    const ids = Array.isArray(reply.messageIds) ? reply.messageIds : [];
+    const key = `${sessionId}:${ids[ids.length - 1] || text}`;
+    if (spoken.has(key)) return;
+    spoken.add(key);
+    if (spoken.size > 256) {
+      const keep = [...spoken].slice(-128);
+      spoken.clear();
+      for (const item of keep) spoken.add(item);
+    }
+    const duration = Math.min(15, Math.max(1, 2.5 + [...text].length * 0.12));
+    try {
+      await withTimeout(say(text, duration), Math.min(5000, Math.max(1, Number(cfg.replyTimeoutMs) || 1)), 'companion speech timed out');
+      lastSpokenAt = now();
+    }
+    catch (error) { logFailure('say', error); }
+  }
+
+  async function deliver(items, currentTime) {
+    const session = await ensureSession();
+    const attachment = await captureIfDue(items, currentTime);
+    const prompt = promptFor(items.map((item) => item.event), !!attachment);
+    const extra = attachment ? { attachments: [attachment] } : {};
+    const baseline = await baselineFor(session.id, session.fresh);
+    const scope = `companion-${randomUUID()}`;
+    let waiting = null;
+    let replyDeadline = 0;
+    let sent = false;
+    try {
+      if (replyClient && typeof waitForReply === 'function') {
+        replyDeadline = Date.now() + Math.max(1, Number(cfg.replyTimeoutMs) || 1);
+        waiting = waitForReply({
+          client: replyClient,
+          sessionId: session.id,
+          baseline,
+          timeoutMs: cfg.replyTimeoutMs,
+          pollMs: cfg.replyPollMs,
+        });
+        waiting?.promise?.catch(() => {});
+      }
+      const ack = await withTimeout(send(prompt, session.id, extra), cfg.replyTimeoutMs, 'companion send timed out');
+      sent = true;
+      const actualId = ack?.session_id || ack?.sessionId || session.id;
+      if (session.fresh) {
+        state.sessionId = String(actualId);
+        draftSessionId = '';
+        draftSessionTitle = '';
+        save();
+        rename(state.sessionId, session.name).catch(() => {});
+      }
+      if (subscribeAgent) {
+        try { await withTimeout(subscribeAgent(session.id, scope), 5000, 'companion subscription timed out'); }
+        catch (error) { logFailure('subscribe', error); }
+      }
+      waiting?.accept?.(ack?.message_id);
+      if (waiting?.promise) {
+        const remaining = Math.max(1, replyDeadline - Date.now());
+        try { await relayReply(await withTimeout(waiting.promise, remaining, 'companion reply timed out'), session.id); }
+        catch (error) { logFailure('reply', error); }
+      }
+      return { sent: true };
+    } catch (error) {
+      // Once chat.stream accepted the message, retrying would duplicate it. Only
+      // transport failures before acceptance keep the event in the queue.
+      if (sent) return { sent: true };
+      throw error;
+    } finally {
+      waiting?.cancel?.();
+      if (closeAgentSubscription) closeAgentSubscription(scope);
+    }
+  }
+
+  async function flush(currentTime = now()) {
+    if (!due(currentTime)) return false;
+    const batch = selectBatch();
+    if (!batch.items.length || !batch.lines.length) {
+      pending = [];
+      return false;
+    }
     sending = true;
     try {
-      // One side chat for good: the remembered one, else an existing chat with the title, else a new one.
-      const name = !state.sessionId ? await title().catch(() => 'Muse の身体') : '';
-      if (!state.sessionId && sessions) {
-        const list = await sessions().catch(() => null);
-        const rows = Array.isArray(list) ? list : list?.sessions || [];
-        const found = rows.find((row) => row && !row.is_primary && String(row.title || '').trim() === name);
-        const foundId = found?.session_id || found?.id;
-        if (foundId) { state.sessionId = foundId; save(); }
-      }
-      const fresh = !state.sessionId;
-      const id = state.sessionId || require('node:crypto').randomUUID();
-      const result = await send(text, id);
-      if (fresh) {
-        state.sessionId = result?.session_id || id; save();
-        rename(state.sessionId, name).catch(() => {});
-      }
-      lastSentAt = now;
-      if (lines.some((l) => !l.startsWith('（定期）'))) lastCheckinAt = now;
-    } catch (e) {
-      log('companion-link send', e.message);
-      lastSentAt = now; // try again after the gap, not in a tight loop
-    } finally { sending = false; }
+      const result = await deliver(batch.items, currentTime);
+      if (!result?.sent) return false;
+      markDelivered(batch.items);
+      lastSentAt = currentTime;
+      lastError = '';
+      if (batch.items.some((item) => item.event.type === 'checkin')) lastCheckinAt = currentTime;
+      sendFailures = 0;
+      sendBackoffUntil = 0;
+      return true;
+    } catch (error) {
+      sendFailures += 1;
+      sendBackoffUntil = currentTime + Math.min(cfg.retryMaxS, cfg.retryBaseS * 2 ** Math.min(sendFailures - 1, 6));
+      logFailure('send', error);
+      return false;
+    } finally {
+      sending = false;
+    }
   }
 
-  function start() { if (!timer && state.enabled) timer = setInterval(() => { poll().catch(() => {}); }, POLL_MS); }
-  function stop() { clearInterval(timer); timer = null; pending = []; }
+  async function poll() {
+    if (!state.enabled) return { skipped: 'disabled' };
+    const currentTime = now();
+    if (currentTime < pollBackoffUntil) return { skipped: 'poll-backoff' };
+    try {
+      await updateEvents(currentTime);
+      companionUp = true;
+      pollFailures = 0;
+      pollBackoffUntil = 0;
+    } catch (error) {
+      companionUp = false;
+      pollFailures += 1;
+      pollBackoffUntil = currentTime + Math.min(60, cfg.retryBaseS * 2 ** Math.min(pollFailures - 1, 5));
+      logFailure('events', error);
+      return { skipped: 'events-error' };
+    }
+    updateIdle(currentTime);
+    await flush(currentTime);
+    return { pending: pending.length, sessionId: state.sessionId || null };
+  }
+
+  function start() {
+    if (!timer && state.enabled) {
+      timer = setInterval(() => { poll().catch((error) => logFailure('poll', error)); }, cfg.pollMs);
+      timer.unref?.();
+    }
+    return timer !== null;
+  }
+
+  function stop() {
+    clearInterval(timer);
+    timer = null;
+    // Keep pending events so an explicit disable/re-enable does not lose a failed notification.
+  }
+
   return {
     start,
     stop,
-    status: () => ({ enabled: state.enabled, companionUp, sessionId: state.sessionId || null }),
-    setEnabled(on) { state.enabled = Boolean(on); save(); if (state.enabled) start(); else stop(); return state.enabled; },
+    poll,
+    flush,
+    status: () => ({
+      enabled: state.enabled,
+      companionUp,
+      sessionId: state.sessionId || null,
+      pending: pending.length,
+      inFlight: sending,
+      gameActive: game.active,
+      lastEventId,
+      lastSentAt: Number.isFinite(lastSentAt) ? lastSentAt : null,
+      lastCaptureAt: Number.isFinite(lastCaptureAt) ? lastCaptureAt : null,
+      lastReplyAt: Number.isFinite(lastReplyAt) ? lastReplyAt : null,
+      lastSpokenAt: Number.isFinite(lastSpokenAt) ? lastSpokenAt : null,
+      lastError: lastError || null,
+    }),
+    setEnabled(on) {
+      state.enabled = Boolean(on);
+      save();
+      if (state.enabled) start();
+      else stop();
+      return state.enabled;
+    },
   };
 }
 
-module.exports = { createCompanionLink, describe };
+module.exports = {
+  COMPANION,
+  DEFAULTS,
+  canonicalBubbleText,
+  createCompanionLink,
+  describe,
+};

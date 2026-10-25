@@ -431,10 +431,30 @@ function setupDesktop({getWindow,localBridge}) {
   handle('set-auto-resume',enabled=>{resume.enabled=enabled===true;saveResume();if(resume.enabled)scheduleResume(1000);return resume.enabled;});
   // Muse's 3D desktop body (kaguya-companion): what happens to it goes to her side chat, and she moves it
   // herself with the companion.act / companion.info PC commands (src/companion-link.js).
+  const companionUrl='http://127.0.0.1:38741';
+  async function companionRequest(route,body,method='POST') {
+    let response;
+    try {
+      const request={method,headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(3000)};
+      if(method!=='GET')request.body=JSON.stringify(body||{});
+      response=await session.defaultSession.fetch(companionUrl+route,request);
+    } catch { throw new Error('companion unavailable'); }
+    if(response.status===409)return {status:409};
+    if(!response.ok)throw new Error('companion HTTP '+response.status);
+    try{return await response.json();}catch{throw new Error('companion returned invalid JSON');}
+  }
   const companionLink=createCompanionLink({dataDir,
-    send:(text,id)=>client.status==='connected'?client.send(text,id,nodeId):Promise.reject(new Error('not connected')),
+    send:(text,id,extra)=>client.status==='connected'?client.send(text,id,nodeId,extra):Promise.reject(new Error('not connected')),
     rename:(id,title)=>client.request('POST','/session/rename',{session_id:id,title}),
     sessions:()=>client.sessions(),
+    history:id=>client.history(id),
+    replyClient:client,
+    waitForReply,
+    subscribeAgent:(id,scope)=>client.subscribeAgent(id,scope),
+    closeAgentSubscription:scope=>client.closeAgentSubscription(scope),
+    captureGame:()=>companionRequest('/game-capture',{}),
+    gameState:()=>companionRequest('/game',undefined,'GET'),
+    say:(text,duration)=>companionRequest('/say',{text:String(text).slice(0,200),duration:Math.min(15,Math.max(1,Number(duration)||1))}),
     title:async()=>{const r=await client.request('GET','/identity');return (typeof r?.name==='string'&&r.name.trim()?r.name.trim().slice(0,40):'Muse')+' の身体';},
     idleSeconds:()=>powerMonitor.getSystemIdleTime(),
     log:(...args)=>console.warn(...args)});

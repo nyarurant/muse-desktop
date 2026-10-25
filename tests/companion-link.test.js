@@ -1,0 +1,292 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { EventEmitter } = require('node:events');
+const {
+  canonicalBubbleText,
+  createCompanionLink,
+} = require('../src/companion-link');
+
+function fixture(t, initial) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-companion-link-'));
+  if (initial) fs.writeFileSync(path.join(dir, 'companion-link.json'), JSON.stringify(initial));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function linkFixture(t, { responses, now, send, ...options }) {
+  const calls = [];
+  let index = 0;
+  const dataDir = fixture(t, options.initial);
+  const fetchEvents = async (after) => {
+    calls.push(after);
+    const next = responses[Math.min(index++, responses.length - 1)];
+    return typeof next === 'function' ? next(after) : next;
+  };
+  const sent = [];
+  const link = createCompanionLink({
+    ...options,
+    dataDir,
+    now,
+    fetchEvents,
+    send: async (...args) => {
+      sent.push(args);
+      return send ? send(...args) : { session_id: 'side-session', message_id: 'sent-1' };
+    },
+    options: { urgentGapS: 1, ...(options.options || {}) },
+  });
+  t.after(() => link.stop());
+  return { link, calls, sent };
+}
+
+test('urgent events flush quickly while check-ins remain bounded to five minutes', async (t) => {
+  let current = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { last: 0, events: [] },
+      { last: 1, events: [{ id: 1, type: 'click', part: 'head', at: 1 }] },
+      { last: 1, events: [] },
+      { last: 1, events: [] },
+      { last: 1, events: [] },
+    ],
+  });
+
+  await link.poll();
+  current = 1;
+  await link.poll();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0][0], /頭をクリック/);
+
+  current = 299;
+  await link.poll();
+  assert.equal(sent.length, 1, 'a check-in must not fire before five minutes');
+  current = 300;
+  await link.poll();
+  assert.equal(sent.length, 2, 'the five-minute check-in should be delivered when due');
+  current = 301;
+  await link.poll();
+  assert.equal(sent.length, 2, 'the check-in must not repeat every poll');
+});
+
+test('false game-end events are ignored, failed events retry, and an event cursor reset starts a new generation', async (t) => {
+  let current = 0;
+  let attempts = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { sourceId: 'companion-a', last: 10, events: [] },
+      { sourceId: 'companion-a', last: 11, events: [{ id: 11, type: 'game-end', at: 1 }] },
+      { sourceId: 'companion-a', last: 11, events: [{ id: 12, type: 'click', at: 2 }] },
+      { sourceId: 'companion-a', last: 11, events: [] },
+      { sourceId: 'companion-b', last: 1, events: [{ id: 1, type: 'game-start', at: 3 }] },
+    ],
+    send: async (...args) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary transport failure');
+      return { session_id: 'retry-side', message_id: `sent-${attempts}` };
+    },
+  });
+
+  await link.poll();
+  current = 1;
+  await link.poll();
+  assert.equal(sent.length, 0, 'a close without an accepted start is not a game notification');
+  assert.equal(link.status().gameActive, false);
+
+  current = 2;
+  await link.poll();
+  assert.equal(sent.length, 1);
+  assert.equal(link.status().pending, 1, 'the failed event stays queued');
+
+  current = 4;
+  await link.poll();
+  assert.equal(sent.length, 2, 'the retained event retries after backoff');
+  assert.equal(link.status().pending, 0);
+
+  current = 5;
+  await link.poll();
+  assert.equal(link.status().gameActive, true, 'a lower event cursor resets stale game state');
+  assert.equal(sent.length, 3);
+});
+
+test('game captures are attached only at start/peek and are cadence limited', async (t) => {
+  let current = 0;
+  let captureCalls = 0;
+  const capture = {
+    type: 'image',
+    mime_type: 'image/jpeg',
+    data_base64: 'aGVsbG8=',
+    filename: 'game.jpg',
+  };
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { last: 0, events: [] },
+      { last: 1, events: [{ id: 1, type: 'game-start', at: 1 }] },
+      { last: 2, events: [{ id: 2, type: 'game-peek', at: 2 }] },
+      { last: 3, events: [{ id: 3, type: 'game-peek', at: 92 }] },
+      { last: 4, events: [{ id: 4, type: 'game-end', at: 93 }] },
+    ],
+    captureGame: async () => { captureCalls += 1; return { ok: true, attachment: capture }; },
+  });
+
+  await link.poll();
+  current = 1;
+  await link.poll();
+  assert.deepEqual(sent[0][2], { attachments: [capture] });
+  assert.equal(captureCalls, 1);
+
+  current = 2;
+  await link.poll();
+  assert.deepEqual(sent[1][2], {}, 'a periodic peek inside the 90-second window has no new image');
+  assert.equal(captureCalls, 1);
+
+  current = 92;
+  await link.poll();
+  assert.deepEqual(sent[2][2], { attachments: [capture] });
+  assert.equal(captureCalls, 2);
+
+  current = 93;
+  await link.poll();
+  assert.deepEqual(sent[3][2], {}, 'ending a game never captures a background screen');
+  assert.equal(captureCalls, 2);
+});
+
+test('a captured image is retained for a failed event retry without recapturing', async (t) => {
+  let current = 0;
+  let attempts = 0;
+  let captureCalls = 0;
+  const capture = { type: 'image', mime_type: 'image/jpeg', data_base64: 'aGVsbG8=', filename: 'game.jpg' };
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { last: 0, events: [] },
+      { last: 1, events: [{ id: 1, type: 'game-start', at: 1 }] },
+      { last: 1, events: [] },
+    ],
+    captureGame: async () => { captureCalls += 1; return { ok: true, attachment: capture }; },
+    send: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary transport failure');
+      return { session_id: 'side-session', message_id: `sent-${attempts}` };
+    },
+  });
+
+  await link.poll();
+  current = 1;
+  await link.poll();
+  assert.equal(link.status().pending, 1);
+  current = 3;
+  await link.poll();
+  assert.equal(captureCalls, 1);
+  assert.deepEqual(sent[1][2], { attachments: [capture] });
+  assert.equal(link.status().pending, 0);
+});
+
+test('initial active game state is reconciled so a restarted link captures immediately', async (t) => {
+  let current = 0;
+  const capture = { type: 'image', mime_type: 'image/jpeg', data_base64: 'aGVsbG8=', filename: 'game.jpg' };
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { sourceId: 'companion-a', last: 7, events: [] },
+      { sourceId: 'companion-a', last: 7, events: [] },
+    ],
+    gameState: async () => ({ ok: true, active: true, windowId: 'game-window' }),
+    captureGame: async () => ({ ok: true, attachment: capture }),
+  });
+
+  await link.poll();
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0][2], { attachments: [capture] });
+  assert.equal(link.status().gameActive, true);
+  current = 1;
+  await link.poll();
+  assert.equal(sent.length, 1, 'repeated startup polls do not duplicate the synthetic start');
+});
+
+test('a real end event after startup reconciliation is accepted despite its older event timestamp', async (t) => {
+  let current = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { sourceId: 'companion-a', last: 4, events: [] },
+      { sourceId: 'companion-a', last: 5, events: [{ id: 5, type: 'game-end', at: 0.5 }] },
+    ],
+    gameState: async () => ({ ok: true, active: true, windowId: 'game-window' }),
+  });
+
+  await link.poll();
+  assert.equal(sent.length, 1);
+  current = 1;
+  await link.poll();
+  assert.equal(sent.length, 2);
+  assert.equal(link.status().gameActive, false);
+});
+
+test('reply relay is scoped to the dedicated session, uses the native subscription, and never speaks duplicates or tool traces', async (t) => {
+  let current = 0;
+  const replies = [
+    { text: '見えてるね。無理せず楽しんでね。', messageIds: ['reply-1'] },
+    { text: '見えてるね。無理せず楽しんでね。', messageIds: ['reply-1'] },
+  ];
+  const waits = [];
+  const subscriptions = [];
+  const closed = [];
+  const historyCalls = [];
+  const said = [];
+  const dataDir = fixture(t, { enabled: true, sessionId: 'dedicated-side' });
+  const responses = [
+    { last: 0, events: [] },
+    { last: 1, events: [{ id: 1, type: 'click', at: 1 }] },
+    { last: 2, events: [{ id: 2, type: 'click', at: 2 }] },
+  ];
+  let responseIndex = 0;
+  const client = new EventEmitter();
+  const link = createCompanionLink({
+    dataDir,
+    now: () => current,
+    fetchEvents: async () => responses[responseIndex++],
+    send: async (text, id, nodeId, extra) => ({ text, id, nodeId, extra, session_id: id, message_id: `sent-${id}` }),
+    history: async (id) => { historyCalls.push(id); return { chat_events: [{ message_id: 'old-message' }] }; },
+    replyClient: client,
+    waitForReply: (args) => {
+      waits.push(args);
+      const reply = replies[waits.length - 1];
+      return { promise: Promise.resolve(reply), accept() {}, cancel() {} };
+    },
+    subscribeAgent: async (id, scope) => { subscriptions.push({ id, scope }); },
+    closeAgentSubscription: (scope) => closed.push(scope),
+    say: async (text, duration) => said.push({ text, duration }),
+    options: { urgentGapS: 1 },
+  });
+  t.after(() => link.stop());
+
+  await link.poll();
+  current = 1;
+  await link.poll();
+  current = 2;
+  await link.poll();
+
+  assert.equal(waits.length, 2);
+  assert.deepEqual(historyCalls, ['dedicated-side', 'dedicated-side']);
+  assert.equal(waits[0].sessionId, 'dedicated-side');
+  assert.deepEqual([...waits[0].baseline], ['old-message']);
+  assert.equal(subscriptions.length, 2);
+  assert.equal(subscriptions[0].id, 'dedicated-side');
+  assert.match(subscriptions[0].scope, /^companion-/);
+  assert.deepEqual(closed, subscriptions.map((item) => item.scope));
+  assert.equal(said.length, 1, 'the same completed assistant message is spoken once');
+  assert.ok(said[0].duration <= 15);
+  assert.equal(link.status().lastSentAt, 2);
+  assert.equal(link.status().lastReplyAt, 2);
+  assert.equal(link.status().lastSpokenAt, 1, 'lastSpokenAt is the time the unique bubble was sent');
+  assert.equal(link.status().inFlight, false);
+  assert.equal(canonicalBubbleText('```local-tool\ncompanion.act\n```'), null);
+  assert.equal(canonicalBubbleText('普通の返事です。'), '普通の返事です。');
+});
