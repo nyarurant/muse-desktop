@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {mergeMessages,applyDelta}=require('../src/chat-model');
+const {mergeMessages,applyDelta,sessionAfterSend}=require('../src/chat-model');
 const {allowedGateway,unwrap}=require('../src/muse-client');
 test('history updates replace a message and exclude private transcript events',()=>{
   const messages=mergeMessages([], [
@@ -40,4 +40,9 @@ test('attachment markers are split out of user text', () => {
   assert.deepEqual(splitAttachments('plain [not a marker]'), {text: 'plain [not a marker]', files: []});
   const assistant = messageFromEvent({event_name: 'message.assistant', message_id: 'a2', display_text: '[image:image/png x.png]'});
   assert.equal(assistant.content, '[image:image/png x.png]');
+});
+test('a main chat send stays on the main chat view even when Muse returns its real session ID',()=>{
+  assert.equal(sessionAfterSend('',{session_id:'80dfec68-primary',is_thread:false}),'');
+  assert.equal(sessionAfterSend('draft-local',{session_id:'thread-server',is_thread:true}),'thread-server');
+  assert.equal(sessionAfterSend('thread-a',{}),'thread-a');
 });

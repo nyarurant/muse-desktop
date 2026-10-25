@@ -17,7 +17,7 @@ const {NativeDevice}=require('./native-device');
 const {createNativeExecutor}=require('./native-executor');
 const markdown=new MarkdownIt({html:false,linkify:true,breaks:true});
 const appUrl=pathToFileURL(path.join(__dirname,'app.html')).href;
-function setupDesktop({getWindow,openTools,localBridge}) {
+function setupDesktop({getWindow,localBridge}) {
   const dataDir=app.getPath('userData');fs.mkdirSync(dataDir,{recursive:true});
   const authFile=path.join(dataDir,'muse-session.enc');
   const pinsFile=path.join(dataDir,'gateway-pins.json');
@@ -60,6 +60,7 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   client.on('status',({status})=>{if(status!=='connected')subscribed=false;});
   async function connect() {
     await client.connect();if(!subscribed){await client.subscribe();subscribed=true;}
+    autoConnectPc();
     const changed=keyChanged;keyChanged=false;
     return {status:client.status,keyChanged:changed};
   }
@@ -111,7 +112,10 @@ function setupDesktop({getWindow,openTools,localBridge}) {
     device.on('status',value=>{
       if(nativeDevice!==device)return;
       const message=value.message==='connecting'?'PC に接続しています…':value.connected?'この PC は Muse に直接接続しています。':'PC の直接接続が切れました。設定画面で再接続できます。';
-      emit('pc-connection',{...value,message});
+      // While auto-connect is on, drops and retries stay quiet; a manual connect reports its own error.
+      emit('pc-connection',{...value,message:value.connected||!pcAutoConnect?message:undefined});
+      if(value.connected)pcRetryDelay=0;
+      else if(value.message!=='connecting')schedulePcRetry();
       if(!value.connected){
         for(const owner of nativeOwners)localBridge.stop(owner);nativeExecutor.dispose();
         const run=agentRun;
@@ -127,6 +131,21 @@ function setupDesktop({getWindow,openTools,localBridge}) {
     await device.connect({vm,nodeId:deviceAuth.saved.nodeId});
     if(generation!==pcGeneration){device.disconnect();throw new Error('PC の接続を中止しました。');}
     return pcState();
+  }
+  // An authenticated PC connects by itself once Muse is connected, and again after a drop
+  // (5 s -> 60 s backoff). Turning "このPC" off stops this until it is turned on again or the app restarts.
+  let pcAutoConnect=true,pcRetryTimer=null,pcRetryDelay=0;
+  function autoConnectPc() {
+    clearTimeout(pcRetryTimer);pcRetryTimer=null;
+    if(!pcAutoConnect||quitting||nativeDevice?.connected||pcConnecting||client.status!=='connected')return;
+    let hasDevice=false;try{hasDevice=auth().snapshot().hasDevice;}catch{}
+    if(!hasDevice)return;
+    connectPc().then(()=>{pcRetryDelay=0;},()=>schedulePcRetry());
+  }
+  function schedulePcRetry() {
+    if(!pcAutoConnect||pcRetryTimer||quitting)return;
+    pcRetryDelay=Math.min(60000,pcRetryDelay?pcRetryDelay*2:5000);
+    pcRetryTimer=setTimeout(()=>{pcRetryTimer=null;autoConnectPc();},pcRetryDelay);
   }
   function pcState() {return {workspace:localBridge.workspace(),running:!!agentRun||nativeOwners.size>0,sessionId:agentRun?.viewSessionId,connected:!!nativeDevice?.connected};}
   function authState() {const value=auth().snapshot();return nativeDevice?.connected?{...value,phase:'ready',message:'この PC は Muse に直接接続しています。'}:value;}
@@ -210,8 +229,8 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   handle('pc-auth-two-factor-send',index=>auth().twoFactor(index));
   handle('pc-auth-two-factor-confirm',(index,code)=>auth().twoFactor(index,code));
   handle('pc-auth-cancel',()=>auth().cancel());
-  handle('pc-connect',async()=>{await connectPc();return authState();});
-  handle('pc-disconnect',()=>{stopAgent();return pcState();});
+  handle('pc-connect',async()=>{pcAutoConnect=true;clearTimeout(pcRetryTimer);pcRetryTimer=null;await connectPc();pcRetryDelay=0;return authState();});
+  handle('pc-disconnect',()=>{pcAutoConnect=false;clearTimeout(pcRetryTimer);pcRetryTimer=null;stopAgent();return pcState();});
   handle('pc-start',(text,id='',extra={})=>{
     validId(id);
     const attachments=attachmentItems(extra?.attachments);
@@ -399,7 +418,6 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   });
   handle('themes',()=>client.request('GET','/api/chat/themes'));
   handle('activity',()=>client.request('GET','/activity',{limit:30,capabilities:['ACTIVITY_FEED_GOALS','ACTIVITY_FEED_PEER_CONVERSATIONS']}));
-  handle('tools',()=>{openTools();return true;});
   handle('open-link',url=>{const u=new URL(url);if(!['https:','http:'].includes(u.protocol))throw new Error('このリンクは開けません。');return shell.openExternal(u.href);});
   handle('markdown',text=>{if(typeof text!=='string'||text.length>1000000)throw new Error('表示する文章が大きすぎます。');return markdown.render(text);});
   // ---- Login (required) ----
@@ -452,7 +470,7 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   });
   // A logged-out website session (or a rejected token) puts the whole app on the login screen.
   client.on('status',({status})=>{if(status==='auth_required')openLogin();});
-  app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);stopAgent();client.disconnect(false);});
+  app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);clearTimeout(pcRetryTimer);stopAgent();client.disconnect(false);});
   return {client,connect,startAgent,stopAgent,isAgentRunning:()=>!!agentRun||nativeOwners.size>0};
 }
 module.exports={setupDesktop};

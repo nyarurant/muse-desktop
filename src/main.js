@@ -17,11 +17,10 @@ const MUSE_URL = 'https://muse.ai/';
 const TOGGLE_SHORTCUT = 'Alt+Shift+Space';
 const MAX_OUTPUT = 2 * 1024 * 1024;
 const MAX_RUNTIME_MS = 10 * 60 * 1000;
-const toolsUrl = pathToFileURL(path.join(__dirname, 'tools.html')).href;
+const appUrl = pathToFileURL(path.join(__dirname, 'app.html')).href;
 const iconPath = path.join(__dirname, 'assets', 'icon.png');
 const startHidden = process.argv.includes('--hidden');
 let museWindow = null;
-let toolsWindow = null;
 let desktop = null;
 let tray = null;
 let prefs = null;
@@ -33,17 +32,18 @@ let active = null;
 let workflowRunning = false;
 let stopWorkflow = false;
 
+// The local work page lives in the main window (app.html); there is no separate tools window.
 function assertToolsSender(event) {
-  if (!toolsWindow || toolsWindow.isDestroyed() ||
-      event.sender !== toolsWindow.webContents ||
-      event.senderFrame !== toolsWindow.webContents.mainFrame ||
-      event.senderFrame.url !== toolsUrl) {
-    throw new Error('Trusted local tools window only');
+  if (!museWindow || museWindow.isDestroyed() ||
+      event.sender !== museWindow.webContents ||
+      event.senderFrame !== museWindow.webContents.mainFrame ||
+      event.senderFrame.url !== appUrl) {
+    throw new Error('Local Muse app only');
   }
 }
 function sendTools(channel, data) {
-  if (toolsWindow && !toolsWindow.isDestroyed()) {
-    toolsWindow.webContents.send(channel, data);
+  if (museWindow && !museWindow.isDestroyed()) {
+    museWindow.webContents.send(channel, data);
   }
 }
 
@@ -136,7 +136,7 @@ function setOpenAtLogin(enabled) {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     {label: 'Muse を開く', click: showMuse},
-    {label: 'Local Workspace / Shell', click: openTools},
+    {label: 'ローカル作業', click: openTools},
     {type: 'separator'},
     {label: '閉じるボタンでトレイに常駐', type: 'checkbox', checked: prefs.get().closeToTray,
       click: (item) => prefs.set({closeToTray: item.checked})},
@@ -154,19 +154,8 @@ function createTray() {
   tray.on('click', toggleMuse);
 }
 function openTools() {
-  if (toolsWindow && !toolsWindow.isDestroyed()) { toolsWindow.show(); toolsWindow.focus(); return; }
-  toolsWindow = new BrowserWindow({
-    title: 'Muse Desktop Community — Local Workspace',
-    width: 940, height: 820, minWidth: 650, minHeight: 560,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'), nodeIntegration: false,
-      contextIsolation: true, sandbox: true, webviewTag: false,
-    },
-  });
-  toolsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  toolsWindow.webContents.on('will-navigate', (event) => event.preventDefault());
-  toolsWindow.loadFile(path.join(__dirname, 'tools.html'));
-  toolsWindow.on('closed', () => { toolsWindow = null; });
+  showMuse();
+  museWindow?.webContents.send('muse:event', {type: 'workspace'});
 }
 function setMenu() {
   const template = [
@@ -174,7 +163,7 @@ function setMenu() {
       {label: 'Muse を開く', click: showMuse},
       {label: 'ホーム', accelerator: 'Alt+Home', click: () => navigate('home')},
       {label: 'muse.ai をブラウザで開く', click: () => shell.openExternal(MUSE_URL)},
-      {label: 'Local Workspace / Shell', accelerator: 'CmdOrCtrl+Shift+T', click: openTools},
+      {label: 'ローカル作業', accelerator: 'CmdOrCtrl+Shift+T', click: openTools},
       {type: 'separator'},
       {label: 'ウィンドウを閉じる', accelerator: 'CmdOrCtrl+W', role: 'close'},
       {label: '終了', accelerator: 'CmdOrCtrl+Q', click: () => { quitting = true; app.quit(); }},
@@ -207,7 +196,7 @@ function endProcess(proc) {
 
 // Local commands run without confirmation, through the shell, starting in the workspace folder.
 function executeLocal(command, capture = false, owner = null, settings = {}) {
-  if (active) throw new Error('Another command is already running');
+  if (active) throw new Error('別のコマンドが実行中です。');
   const options = {
     cwd: settings.cwd || workspace,
     shell: true,
@@ -222,7 +211,7 @@ function executeLocal(command, capture = false, owner = null, settings = {}) {
   const timeout = setTimeout(() => {
     if (active?.proc === proc) {
       timedOut = true;
-      sendTools('tools:output', '\n[10 minute execution limit reached; terminating]\n');
+      sendTools('tools:output', '\n[実行時間の上限（10分）に達したため終了します]\n');
       endProcess(proc);
     }
   }, settings.timeout_ms || MAX_RUNTIME_MS);
@@ -248,7 +237,7 @@ function executeLocal(command, capture = false, owner = null, settings = {}) {
       active.total += buf.length;
       if (active.total <= MAX_OUTPUT) sendTools('tools:output', String(buf));
       else {
-        sendTools('tools:output', '\n[2MB output limit reached; terminating]\n');
+        sendTools('tools:output', '\n[出力の上限（2MB）に達したため終了します]\n');
         endProcess(proc);
       }
     };
@@ -256,7 +245,7 @@ function executeLocal(command, capture = false, owner = null, settings = {}) {
     proc.stderr?.on('data', buf=>output(buf,'err'));
     proc.once('error', (error) => {
       errored = true;
-      sendTools('tools:output', `\n[Process error: ${error.message}]\n`);
+      sendTools('tools:output', `\n[プロセスのエラー: ${error.message}]\n`);
       // Electron/Node should emit close afterward. Cover a missing close event.
       if (!proc.pid) finish(null, 'error');
     });
@@ -354,7 +343,7 @@ app.userAgentFallback = app.userAgentFallback
 app.whenReady().then(() => {
   fs.mkdirSync(workspace, { recursive: true });
   prefs = createPrefs(app.getPath('userData'));
-  desktop = setupDesktop({getWindow: () => museWindow, openTools, localBridge: createLocalBridge()});
+  desktop = setupDesktop({getWindow: () => museWindow, localBridge: createLocalBridge()});
   setMenu();
   // The local tools window no longer opens automatically; use the menu or Ctrl+Shift+T.
   shortcutRegistered = globalShortcut.register(TOGGLE_SHORTCUT, toggleMuse);
@@ -368,9 +357,9 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('tools:select-workspace', async (event) => {
     assertToolsSender(event);
-    if (active || workflowRunning || desktop?.isAgentRunning?.()) throw new Error('Stop running commands before changing workspace');
-    const result = await dialog.showOpenDialog(toolsWindow, {
-      title: 'Choose a trusted workspace', defaultPath: workspace,
+    if (active || workflowRunning || desktop?.isAgentRunning?.()) throw new Error('実行中のコマンドを止めてから作業フォルダーを変更してください。');
+    const result = await dialog.showOpenDialog(museWindow, {
+      title: '作業フォルダーを選択', defaultPath: workspace,
       properties: ['openDirectory', 'createDirectory'],
     });
     if (!result.canceled && result.filePaths[0] && result.filePaths[0] !== workspace) {
@@ -380,16 +369,16 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('tools:run', async (event, command) => {
     assertToolsSender(event);
-    if (active || workflowRunning) throw new Error('Another command or workflow is running');
+    if (active || workflowRunning) throw new Error('別のコマンドが実行中です。');
     if (typeof command !== 'string' || command.length > 1500 || !command.trim()) {
-      throw new Error('Command must be nonempty and no longer than 1500 characters');
+      throw new Error('コマンドを入力してください（上限 1,500 文字）。');
     }
     executeLocal(command);
     return {started: true};
   });
   ipcMain.handle('tools:run-workflow', async (event) => {
     assertToolsSender(event);
-    if (active || workflowRunning) throw new Error('Another command or workflow is running');
+    if (active || workflowRunning) throw new Error('別のコマンドが実行中です。');
     // Fixed, bounded steps. This is not an autonomous AI development loop.
     const steps = ['npm test', 'npm run build'];
     workflowRunning = true;
@@ -418,7 +407,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('tools:agent-start', async (event, task) => {
     assertToolsSender(event);
-    if (!desktop?.startAgent) throw new Error('The local agent is not available');
+    if (!desktop?.startAgent) throw new Error('PC タスクを利用できません。');
     return desktop.startAgent(task);
   });
   ipcMain.handle('tools:agent-stop', (event) => {

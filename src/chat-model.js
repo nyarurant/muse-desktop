@@ -65,4 +65,10 @@ function localMessageView(message) {
   }
   return {content,toolResults:false};
 }
-if(typeof module!=='undefined')module.exports={messageFromEvent,mergeMessages,applyDelta,splitAttachments,localMessageView};
+// The view a send should follow. A new side chat may get its server ID back, but
+// the main chat stays '' even though Muse returns its real session ID: main chat
+// events and pending state are keyed by ''.
+function sessionAfterSend(sentId,result) {
+  return sentId&&result?.session_id?result.session_id:sentId;
+}
+if(typeof module!=='undefined')module.exports={messageFromEvent,mergeMessages,applyDelta,splitAttachments,localMessageView,sessionAfterSend};

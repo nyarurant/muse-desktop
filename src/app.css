@@ -292,14 +292,47 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); }
 
 /* Feed, ideas, goals, library pages (left rail) */
 .page-mode .transcript, .page-mode .composer-area { display: none; }
+/* Like muse.ai web, the right panel belongs to chat; pages use the full width. */
+.page-mode .panel, .page-mode #panelToggle { display: none !important; }
 .page-view { flex: 1; min-height: 0; overflow-y: auto; padding: 64px 0 32px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .page-column { max-width: 760px; margin: 0 auto; padding: 0 24px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-.page-heading h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 600; }
+.page-heading h1 { margin: 0; font-size: 34px; line-height: 40px; font-weight: 600; }
 .page-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 9999px; background: var(--chip); }
 .page-tabs:empty { display: none; }
 .page-tabs button { height: 28px; padding: 0 14px; border-radius: 9999px; font-size: 13px; color: var(--muted); }
 .page-tabs button.active { background: var(--chip-active); color: var(--text); }
+/* Local work page (formerly a separate window). Patterns follow muse.ai web: Settings > Devices
+   grouped rows (16px group, 44px rows) and the Library page (34px title, 18px section titles). */
+.ws-chip { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 9999px; background: var(--chip-active); font-size: 14px; line-height: 20px; font-weight: 500; color: var(--muted); }
+.ws-chip[data-running="true"] { color: var(--text); }
+.ws-chip[data-running="true"] .status-dot { background: #31c75d; }
+.ws-section { margin: 28px 0 10px; font-size: 18px; line-height: 26px; font-weight: 600; }
+.ws-section-row { display: flex; align-items: center; justify-content: space-between; margin: 28px 0 10px; }
+.ws-section-row .ws-section { margin: 0; }
+.ws-group { padding: 6px; border-radius: 16px; background: var(--chip-active); }
+.ws-row { position: relative; width: 100%; min-height: 44px; display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 12px; text-align: left; font-size: 14px; line-height: 20px; }
+.ws-row + .ws-row::before { content: ""; position: absolute; top: 0; left: 12px; right: 12px; border-top: 1px solid var(--line); }
+.ws-row:hover:not(:disabled) { background: var(--hover); }
+.ws-row-label { flex-shrink: 0; font-weight: 500; }
+.ws-row-value { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--muted); }
+.ws-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.ws-chevron { width: 16px; height: 16px; color: var(--muted); }
+.ws-note { margin: 10px 4px 0; font-size: 13px; line-height: 18px; color: var(--muted); }
+.ws-lead { margin: -2px 0 10px; }
+.ws-inline { margin: 0 0 0 4px; }
+.ws-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ws-presets .pill-button { height: 32px; padding: 0 12px; background: var(--chip-active); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.ws-composer { position: relative; min-height: 58px; padding: 12px 56px 12px 20px; border-radius: 32px; background: var(--surface); display: flex; align-items: center; }
+.ws-composer textarea { display: block; width: 100%; resize: none; border: 0; outline: 0 !important; background: transparent; color: var(--text); font: 14px/24px ui-monospace, Consolas, monospace; min-height: 32px; max-height: 200px; padding: 4px 0; field-sizing: content; }
+.ws-composer textarea::placeholder { color: var(--muted); }
+.ws-composer .send-button:disabled { display: flex; opacity: .4; }
+.ws-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.ws-actions .pill-button, .ws-section-row .pill-button { background: var(--chip-active); }
+#wsStop:not(:disabled), #wsTaskStop:not(:disabled) { color: var(--danger); }
+.ws-output { margin: 0; min-height: 140px; max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px 20px; border: 1px solid var(--line); border-radius: 24px; background: var(--bg); font: 12px/1.6 ui-monospace, Consolas, monospace; }
+.ws-output:empty::before { content: "まだ何も実行していません。"; color: var(--muted); }
+
 .page-section { margin: 24px 0 8px; font-size: 15px; font-weight: 600; color: var(--muted); }
 .card { padding: 16px; border-radius: 20px; background: var(--bot-bubble); margin-bottom: 12px; }
 .card-kicker { display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 18px; color: var(--muted); }

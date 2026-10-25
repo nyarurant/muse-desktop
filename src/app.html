@@ -14,7 +14,7 @@
     <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/></symbol>
     <symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M14.5 4.5v15"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
-    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 10.5a7.5 7.5 0 1 0-1.9 6.5M19.5 4.5v6h-6"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
@@ -86,6 +86,25 @@
     </div>
     <div class="notice" id="notice" role="status" aria-live="polite" hidden><span id="noticeText"></span><button id="dismissNotice" class="icon-button small" aria-label="通知を閉じる"><svg><use href="#i-close"/></svg></button></div>
     <section class="page-view" id="pageView" hidden><div class="page-column"><div class="page-heading"><h1 id="pageTitle"></h1><div class="page-tabs" id="pageTabs"></div></div><div id="pageBody"></div></div></section>
+    <section class="page-view ws-page" id="workspaceView" aria-labelledby="workspaceTitle" hidden><div class="page-column">
+      <div class="page-heading"><h1 id="workspaceTitle">ローカル作業</h1><span class="ws-chip" id="wsStatus" role="status"><span class="status-dot"></span><span id="wsStatusText">待機中</span></span></div>
+      <h3 class="ws-section">この PC</h3>
+      <div class="ws-group">
+        <button type="button" class="ws-row" id="wsPcSetup"><span class="ws-row-label">接続</span><span class="ws-row-value"><span class="status-dot" id="wsPcDot"></span><span id="wsPcText">確認しています…</span></span><svg class="ws-chevron"><use href="#i-chevron"/></svg></button>
+        <button type="button" class="ws-row" id="wsChoose"><span class="ws-row-label">作業フォルダー</span><span class="ws-row-value"><span class="ws-path" id="wsFolder">読み込んでいます…</span></span><svg class="ws-chevron"><use href="#i-chevron"/></svg></button>
+      </div>
+      <p class="ws-note">コマンドはこのフォルダーで始まります。コマンドもファイル操作も確認なしで実行され、フォルダーの外にも読み書きできます。</p>
+      <h3 class="ws-section">コマンド</h3>
+      <div class="ws-presets"><button type="button" class="pill-button" data-ws-cmd="git status">git status</button><button type="button" class="pill-button" data-ws-cmd="npm test">npm test</button><button type="button" class="pill-button" data-ws-cmd="npm run build">npm run build</button><button type="button" class="pill-button" data-ws-cmd="npm install">npm install</button><button type="button" class="pill-button" data-ws-cmd="python -m pytest">pytest</button></div>
+      <div class="ws-composer"><label class="sr-only" for="wsCommand">コマンド</label><textarea id="wsCommand" rows="1" spellcheck="false" placeholder="コマンドを入力（Ctrl+Enter で実行）"></textarea><button type="button" class="round-button send-button" id="wsRun" title="実行 (Ctrl+Enter)" aria-label="実行"><svg><use href="#i-arrow"/></svg></button></div>
+      <div class="ws-actions"><button type="button" class="pill-button" id="wsWorkflow">テスト → ビルド</button><button type="button" class="pill-button" id="wsStop" disabled>停止</button></div>
+      <h3 class="ws-section">PC タスク</h3>
+      <p class="ws-note ws-lead">新しいサイドチャットで、Muse がこの PC を直接操作して進めます。</p>
+      <div class="ws-composer"><label class="sr-only" for="wsTask">タスク</label><textarea id="wsTask" rows="1" spellcheck="false" placeholder="例: テストを通して。失敗していたら原因を直してもう一度実行して"></textarea><button type="button" class="round-button send-button" id="wsTaskRun" title="開始" aria-label="開始"><svg><use href="#i-arrow"/></svg></button></div>
+      <div class="ws-actions"><button type="button" class="pill-button" id="wsTaskStop" disabled>停止</button><span class="ws-note ws-inline" id="wsTaskStatus">待機中</span></div>
+      <div class="ws-section-row"><h3 class="ws-section">実行ログ</h3><button type="button" class="pill-button" id="wsClear">消去</button></div>
+      <pre class="ws-output" id="wsOutput" aria-live="polite"></pre>
+    </div></section>
     <section class="transcript" id="transcript" aria-label="会話履歴" tabindex="0">
       <div class="column">
         <button class="load-more" id="loadMore" hidden>以前のメッセージを読み込む</button>
@@ -99,7 +118,7 @@
       <div class="pc-bar">
         <button type="button" class="pill-button pc-toggle" id="pcMode" aria-pressed="false" aria-describedby="pcHint">このPC: オフ</button>
         <span id="pcHint" class="pc-hint">オンにすると、この会話からPCのコマンド・ファイル操作を実行します。</span>
-        <button type="button" class="icon-button muted" id="pcFolder" title="作業フォルダーを確認・変更" aria-label="作業フォルダーを確認・変更"><svg><use href="#i-terminal"/></svg></button>
+        <button type="button" class="icon-button muted" id="pcFolder" title="ローカル作業（作業フォルダー・コマンド）" aria-label="ローカル作業を開く"><svg><use href="#i-terminal"/></svg></button>
       </div>
       <details id="pcLog" class="pc-log" hidden><summary id="pcStatus" aria-live="polite">PCの実行ログ</summary><div id="pcLogEntries"></div></details>
       <div class="reply-bar" id="replyBar" hidden><svg><use href="#i-reply"/></svg><span id="replyText"></span><button type="button" class="icon-button small muted" id="cancelReply" title="返信をやめる" aria-label="返信をやめる"><svg><use href="#i-close"/></svg></button></div>
@@ -136,6 +155,6 @@
 
   <dialog id="settingsDialog"><div class="dialog-heading"><h2>接続と設定</h2><button class="icon-button muted" id="closeSettings" aria-label="設定を閉じる"><svg><use href="#i-close"/></svg></button></div><p class="dialog-description">Muse アカウントでログインして接続します。ログインが切れたときは、ログイン画面が自動で開きます。</p><div class="setting-row"><div><strong>Muse アカウント</strong><p>ログイン用のウィンドウを開きます。</p></div><button class="pill-button" id="login">ログイン</button></div><div class="setting-row"><div><strong>接続を更新</strong><p>認証と会話一覧を再取得します。</p></div><button class="pill-button" id="reconnect">再接続</button></div><div class="setting-row"><div><strong>外観</strong><p>Web 版の Muse と同じダーク表示が既定です。</p></div><select id="themeMode" aria-label="外観"><option value="dark">ダーク</option><option value="light">ライト</option><option value="system">システムに合わせる</option></select></div><div class="setting-row"><div><strong>承認の自動化</strong><p>Muse の「今回許可」を自動で押します。</p></div><select id="approvalMode" aria-label="承認の自動化"><option value="manual">手動（毎回確認）</option><option value="auto">自動（Web アクセスなど安全なもの）</option><option value="important">重要なものだけ確認</option><option value="bypass">Bypass（すべて許可）</option></select></div><div class="setting-row"><div><strong>止まったら自動で再開</strong><p>作業が途中で止まったら、30 秒後に再開を指示します（自分で停止したときは除く）。</p></div><select id="autoResume" aria-label="止まったら自動で再開"><option value="on">オン</option><option value="off">オフ</option></select></div><div class="dialog-note">接続情報は Windows の暗号化ストレージに保存します。通信記録そのものはコピーしません。</div><div class="dialog-footer"><span>Muse App · Community</span><span id="dialogVersion"></span></div></dialog>
   <dialog id="askDialog"><form method="dialog"><div class="dialog-heading"><h2 id="askTitle"></h2></div><p class="dialog-description" id="askText"></p><input id="askInput" class="dialog-input" maxlength="200" autocomplete="off" hidden><div class="dialog-actions"><button class="pill-button" value="cancel" formnovalidate>キャンセル</button><button class="primary-button" id="askOk" value="ok">OK</button></div></form></dialog>
-  <script src="chat-model.js"></script><script src="app-renderer.js"></script><script src="pc-setup-renderer.js"></script>
+  <script src="chat-model.js"></script><script src="app-renderer.js"></script><script src="pc-setup-renderer.js"></script><script src="workspace-renderer.js"></script>
 </body>
 </html>

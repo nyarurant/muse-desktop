@@ -49,8 +49,22 @@ contextBridge.exposeInMainWorld('muse',Object.freeze({
   avatar:imagePath=>ipcRenderer.invoke('muse:avatar',imagePath),
   themes:()=>ipcRenderer.invoke('muse:themes'),
   activity:()=>ipcRenderer.invoke('muse:activity'),
-  openTools:()=>ipcRenderer.invoke('muse:tools'),
   openLink:url=>ipcRenderer.invoke('muse:open-link',url),
   renderMarkdown:text=>ipcRenderer.invoke('muse:markdown',text),
   onEvent:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('muse:event',listener);return()=>ipcRenderer.removeListener('muse:event',listener);},
+}));
+// Local work page (workspace folder, local commands, PC tasks). Main checks the sender is this app page.
+const toolsEvent=channel=>callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on(channel,listener);return()=>ipcRenderer.removeListener(channel,listener);};
+contextBridge.exposeInMainWorld('workspace',Object.freeze({
+  info:()=>ipcRenderer.invoke('tools:get-info'),
+  chooseFolder:()=>ipcRenderer.invoke('tools:select-workspace'),
+  run:command=>ipcRenderer.invoke('tools:run',command),
+  runWorkflow:()=>ipcRenderer.invoke('tools:run-workflow'),
+  stop:()=>ipcRenderer.invoke('tools:stop'),
+  agentStart:task=>ipcRenderer.invoke('tools:agent-start',task),
+  agentStop:()=>ipcRenderer.invoke('tools:agent-stop'),
+  onOutput:toolsEvent('tools:output'),
+  onStatus:toolsEvent('tools:status'),
+  onAgentStatus:toolsEvent('tools:agent-status'),
+  onWorkflowStatus:toolsEvent('tools:workflow-status'),
 }));

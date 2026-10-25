@@ -38,8 +38,10 @@ const endpoint=process.argv.find(a=>a.startsWith('--cdp='))?.slice(6)||'http://1
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Narrow view overflows');
     await page.screenshot({path:path.join(artifacts,'muse-compact.png')});
     await page.setViewportSize({width:1250,height:850});await page.locator('#showSidebar').click();
-    await page.locator('#tools').click();await context.waitForEvent('page',{predicate:p=>p.url().endsWith('/tools.html'),timeout:5000}).catch(()=>{});
-    const tools=context.pages().find(p=>p.url().endsWith('/tools.html'));assert(tools,'Local tools must still open');await tools.close();
+    const pageCount=context.pages().length;await page.locator('#pcFolder').click();
+    assert(await page.locator('#workspaceView').isVisible(),'Local work page must open inside the main window');
+    assert.equal(context.pages().length,pageCount,'Local work must not open another window');
+    await page.locator('#railChat').click();
     assert.deepEqual(errors,[],'Renderer errors');
     console.log(JSON.stringify({localPage:true,liveHistory:true,sendViaUI:true,assistantReplyVisible:true,replyPersisted:true,draftPreserved:true,settings:true,search:true,compactLayout:true,localTools:true,rendererErrors:errors.length}));
   }finally{await browser.close();}

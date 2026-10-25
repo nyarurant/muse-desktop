@@ -317,11 +317,13 @@ async function loadHistory(append=false){
 }
 // ---- Feed / ideas / goals / library pages ----
 const PAGES={feed:'フィード',ideas:'アイデア',goals:'目標',library:'ライブラリ'};
+// 'workspace' is the static local work page (workspace-renderer.js); the others render into #pageView.
 let pageToken=0;
 function showPage(name,tab){
-  state.page=name||null;document.body.classList.toggle('page-mode',!!name);$('pageView').hidden=!name;
+  state.page=name||null;document.body.classList.toggle('page-mode',!!name);$('pageView').hidden=!name||name==='workspace';$('workspaceView').hidden=name!=='workspace';
   for(const b of document.querySelectorAll('.rail-button')){const on=name?b.dataset.page===name:b.id==='railChat';b.classList.toggle('active',on);if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}
   if(!name)return;
+  if(name==='workspace'){$('workspaceView').scrollTop=0;window.onWorkspaceShown?.();return;}
   $('pageTitle').textContent=PAGES[name];$('pageTabs').replaceChildren();
   const body=$('pageBody');body.replaceChildren(hint('読み込んでいます…'));$('pageView').scrollTop=0;
   if(!state.connected){body.replaceChildren(hint('Muse に接続すると表示されます。'));return;}
@@ -542,6 +544,7 @@ window.muse.onEvent(value=>{
   else if(value.type==='auto-resume'){notice('止まっていた「'+(value.title||'会話')+'」に再開を指示しました。');refreshSessions().catch(()=>{});if(value.id===state.selected)scheduleHistory();}
   else if(value.type==='reconnected')safely(async()=>{notice(value.keyChanged?KEY_CHANGED:'Muse に再接続しました。');await afterConnect();})();
   else if(value.type==='home')safely(()=>select(''))();
+  else if(value.type==='workspace')showPage('workspace');
   else if(value.type==='pc-connection'){state.pcConnected=value.connected===true;if(value.message&&!value.connected)notice(value.message);controls();}
   else if(value.type==='pc-agent'){
     if(value.state==='running')state.pcRun=value;
@@ -592,7 +595,7 @@ $('pcMode').addEventListener('click',safely(async()=>{
   controls();$('prompt').focus();
 }));
 window.onPcSetupConnected=()=>{refreshPcState().catch(()=>{});};
-$('pcFolder').addEventListener('click',safely(()=>call('openTools')));
+$('pcFolder').addEventListener('click',()=>showPage('workspace'));
 window.addEventListener('focus',()=>{refreshPcState().catch(()=>{});});
 // ---- Login screen (login is required; the main process places Meta's page over #loginFrame) ----
 const LOGIN_STEPS=['waiting','session','token','ready'];
@@ -647,7 +650,7 @@ async function send(){
     const result=await call(pc?'pcStart':'send',text,id,{replyTo:replyTo?.id,attachments:attachments.map(a=>({name:a.name,type:a.type,data:a.data}))});
     // PC start acknowledges the local run, not the remote thread creation.
     // pc-sent removes the draft only after Muse acknowledges the first message.
-    if(!pc){state.draftSessions.delete(id);if(state.selected===id){if(result.session_id&&result.session_id!==id)state.selected=result.session_id;await call('subscribe',state.selected);scheduleHistory();await refreshSessions();}}
+    if(!pc){state.draftSessions.delete(id);if(state.selected===id){state.selected=sessionAfterSend(id,result);await call('subscribe',state.selected);scheduleHistory();await refreshSessions();}}
   }
   catch(e){
     state.pending=null;state.busy.set(id,false);
