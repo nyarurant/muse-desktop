@@ -65,7 +65,7 @@ function setupDesktop({getWindow,localBridge}) {
     return {status:client.status,keyChanged:changed};
   }
   // ---- Native PC authentication and structured device control ----
-  let pcAuth=null,agentRun=null,nativeDevice=null,pcConnecting=null,pcGeneration=0;
+  let pcAuth=null,agentRun=null,nativeDevice=null,pcConnecting=null,pcGeneration=0,lastSentSession='';
   const nativeOwners=new Set();
   const nativeExecutor=createNativeExecutor({workspace:()=>localBridge.workspace(),run:(params,owner)=>localBridge.runNative(params,owner)});
   async function nativeRequest(scope,route,body,bearer) {
@@ -124,7 +124,7 @@ function setupDesktop({getWindow,localBridge}) {
     });
     device.on('invoke',value=>{
       if(nativeDevice!==device)return;
-      const view=agentRun?.viewSessionId??'';
+      const view=agentRun?.viewSessionId??lastSentSession;
       emit('pc-tool',{sessionId:view,phase:value.phase,tool:value.command,path:value.params?.path,command:value.params?.command,ok:!!value.result?.ok,output:value.result?JSON.stringify(value.result.payload??value.result.error).slice(0,32000):undefined});
       if(agentRun)agentState(agentRun,'running',{phase:value.phase==='running'?'executing':'thinking',tool:value.command});
     });
@@ -157,6 +157,7 @@ function setupDesktop({getWindow,localBridge}) {
     if(localBridge.isBusy())throw new Error('別のローカル操作が実行中です。');
     if(sessionId!==undefined)validId(sessionId);
     const run={sessionId:sessionId??crypto.randomUUID(),viewSessionId:sessionId,owner:crypto.randomUUID(),controller:new AbortController(),stopped:false};
+    if(sessionId===undefined)draftSessions.add(run.sessionId);
     agentRun=run;
     let waiting;
     try{
@@ -247,7 +248,7 @@ function setupDesktop({getWindow,localBridge}) {
     if(typeof text!=='string'||text.length>100000||(!text.trim()&&!attachments.length))throw new Error('メッセージを入力してください（上限 100,000 文字）。');
     const replyTo=extra?.replyTo===undefined||extra?.replyTo===null?undefined:validId(extra.replyTo);
     if(sendInFlight)throw new Error('送信処理中です。');sendInFlight=true;
-    try{const result=await client.send(text,id,nodeId,{replyTo,attachments});draftSessions.delete(id);return result;}finally{sendInFlight=false;}
+    try{const result=await client.send(text,id,nodeId,{replyTo,attachments});draftSessions.delete(id);lastSentSession=draftSessions.has(id)?id:(id?result?.session_id||id:'');return result;}finally{sendInFlight=false;}
   });
   // Same parts the web client builds: images as `image`, other files inline as `file` (its 10 MB inline limit).
   function attachmentItems(list) {
@@ -265,7 +266,7 @@ function setupDesktop({getWindow,localBridge}) {
     });
   }
   // A stop the user asked for is never auto-resumed.
-  handle('cancel',id=>{validId(id);userCancels[id]=Date.now();if(agentRun&&(id===agentRun.viewSessionId||id===agentRun.sessionId))return stopAgent();return client.cancel(id);});
+  handle('cancel',id=>{validId(id);userCancels[id]=Date.now();if(agentRun&&(id===agentRun.viewSessionId||id===agentRun.sessionId))return stopAgent();for(const owner of nativeOwners)localBridge.stop(owner);return client.cancel(id);});
   // The recorded web client allocates a draft UUID locally. Its first
   // chat.stream submission creates the thread; /session/start is a different API.
   handle('new-session',()=>{const id=crypto.randomUUID();draftSessions.add(id);return {session_id:id,draft:true};});
@@ -449,6 +450,21 @@ function setupDesktop({getWindow,localBridge}) {
     const out={};for(const [k,v] of Object.entries(value))if(!SECRET_KEY.test(k)){const x=displayFields(v,depth+1);if(x!==undefined)out[k]=x;}
     return out;
   }
+  // Connector icons are Meta CDN images; the page CSP blocks remote images, so they come back as data: URLs.
+  const connectorIconUrls=new Map(),connectorIcons=new Map();
+  handle('connector-icon',async id=>{
+    if(typeof id!=='string'||!connectorIconUrls.has(id))return null;
+    if(connectorIcons.has(id))return connectorIcons.get(id);
+    let url;try{url=new URL(connectorIconUrls.get(id));}catch{return null;}
+    if(url.protocol!=='https:'||!/(^|\.)(fbcdn\.net|facebook\.com|meta\.com)$/.test(url.hostname))return null;
+    try{
+      const r=await session.defaultSession.fetch(url.href,{credentials:'omit',redirect:'error',signal:AbortSignal.timeout(10000)});
+      const type=String(r.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+      if(!r.ok||!/^image\/(png|jpeg|webp|gif|svg\+xml)$/.test(type))return null;
+      const data=Buffer.from(await r.arrayBuffer());if(data.length>512*1024)return null;
+      const value='data:'+type+';base64,'+data.toString('base64');connectorIcons.set(id,value);return value;
+    }catch{return null;}
+  });
   async function settled(promise,pick=v=>v){try{return {ok:true,value:displayFields(pick(await promise))};}catch(e){return {ok:false,error:e.message};}}
   // Permission settings live on the "sentinel" service, like /approvals (service 1).
   const permissionRequest=(verb,params)=>client.request(verb,'/permissions/settings',params,{service:1});
@@ -456,7 +472,7 @@ function setupDesktop({getWindow,localBridge}) {
     const [permissions,devices,connectors,channels]=await Promise.all([
       settled(permissionRequest('GET'),v=>({connector_default:v?.connector_default,network_default:v?.network_default,default_content:v?.default_content})),
       settled(client.request('POST','/api/nodes/list',{}),v=>(v?.nodes??v?.devices??[]).map(n=>({node_id:n.node_id,display_name:n.display_name,platform:n.platform,online:n.online===true,connection_state:n.connection_state,last_seen_at:n.last_seen_at}))),
-      settled(client.request('GET','/connectors',{surface:'settings'}),v=>(Array.isArray(v?.connectors)?v.connectors:[]).map(c=>({id:c.id,name:c.name,description:c.description,state:c.state}))),
+      settled(client.request('GET','/connectors',{surface:'settings'}),v=>(Array.isArray(v?.connectors)?v.connectors:[]).map(c=>{if(typeof c.id==='string'&&typeof c.icon_url==='string')connectorIconUrls.set(c.id,c.icon_url);return {id:c.id,name:c.name,description:c.description,state:c.state};})),
       settled(client.request('GET','/channels/status'),v=>(Array.isArray(v?.channels)?v.channels:[]).map(c=>({provider:c.provider,status:c.status,linked:c.linked===true,enabled:c.enabled===true}))),
     ]);
     return {permissions,devices,connectors,channels};

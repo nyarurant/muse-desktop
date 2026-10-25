@@ -60,6 +60,15 @@
     if(!dialog.open)dialog.showModal();
     byId('activityMain').focus();
   };
+  // While the open activity is still running, newer list data replaces it (the step selection resets).
+  window.refreshOpenActivity=list=>{
+    if(!dialog.open||!current)return;
+    const next=list.find(x=>x.message_id&&x.message_id===current.message_id);
+    if(!next||JSON.stringify(next)===JSON.stringify(current))return;
+    const onStep=byId('activitySteps').querySelector('.active')?.dataset.key;
+    if(onStep&&onStep!=='overview')return;
+    window.openActivity(next);
+  };
   byId('closeActivity').addEventListener('click',()=>dialog.close());
   dialog.addEventListener('click',e=>{if(e.target!==dialog)return;const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();});
 })();

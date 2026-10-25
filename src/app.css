@@ -436,6 +436,26 @@ button.settings-row:active { background: var(--chip-active); }
 .ws-output { margin: 0; min-height: 140px; max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px 20px; border: 1px solid var(--line); border-radius: 24px; background: var(--bg); font: 12px/1.6 ui-monospace, Consolas, monospace; }
 .ws-output:empty::before { content: "まだ何も実行していません。"; color: var(--muted); }
 
+/* Library cards, like the web (32px cards with a preview area and a name / meta footer). */
+.page-section-title { margin: 24px 0 12px; font-size: 18px; line-height: 26px; font-weight: 600; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; }
+.lib-card { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 24px; background: var(--bg); text-align: left; transition: border-color .12s, transform .12s; }
+.lib-card:hover { border-color: var(--muted); }
+.lib-preview { height: 112px; display: grid; place-items: center; background: var(--hover); }
+.lib-ext { padding: 4px 10px; border-radius: 8px; background: var(--chip-active); font: 600 12px/16px ui-monospace, Consolas, monospace; color: var(--muted); }
+.lib-foot { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.lib-icon { width: 28px; height: 28px; flex-shrink: 0; display: grid; place-items: center; color: var(--muted); }
+.lib-text { min-width: 0; }
+.lib-name { font-size: 13px; line-height: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-meta { font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Chat header (avatar + name) after scrolling, like the web. */
+.chat-header { position: absolute; top: 10px; left: 50%; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 0; transform: translate(-50%, -8px); opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; }
+.chat-scrolled:not(.page-mode) .chat-header { opacity: 1; transform: translate(-50%, 0); }
+.chat-header-avatar { width: 44px; height: 44px; border-radius: 50%; overflow: hidden; background: var(--chip); }
+.chat-header-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.chat-header-name { margin-top: -6px; padding: 1px 10px; border-radius: 9999px; background: var(--chip); font-size: 12px; line-height: 18px; font-weight: 600; }
+.settings-tile.has-icon { background: #fff; overflow: hidden; }
+.settings-tile img { width: 22px; height: 22px; object-fit: contain; }
 .page-section { margin: 24px 0 8px; font-size: 15px; font-weight: 600; color: var(--muted); }
 .card { padding: 16px; border-radius: 20px; background: var(--bot-bubble); margin-bottom: 12px; }
 .card-kicker { display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 18px; color: var(--muted); }

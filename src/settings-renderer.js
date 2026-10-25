@@ -18,6 +18,10 @@
   // Letter tile for connectors/channels (their icons are remote images the page cannot load).
   function tile(name){const t=el('span','settings-tile',String(name||'?').trim().slice(0,1).toUpperCase());t.setAttribute('aria-hidden','true');return t;}
   function deviceTile(){const t=el('span','settings-tile');t.append(icon('i-device'));t.setAttribute('aria-hidden','true');return t;}
+  // Swap the letter tile for the real connector icon once it arrives.
+  function connectorIcon(tileEl,id){
+    window.muse.connectorIcon(id).then(r=>{if(!r?.ok||!r.value)return;const img=el('img');img.alt='';img.src=r.value;tileEl.replaceChildren(img);tileEl.classList.add('has-icon');}).catch(()=>{});
+  }
   function placeholder(){
     if(!state.connected)return hintText('Muse に接続すると表示されます。');
     const g=el('div','settings-group settings-loading');g.setAttribute('aria-label','読み込んでいます');
@@ -76,7 +80,7 @@
     const r=overview?.connectors;if(!r){host.append(placeholder());return;}
     if(!r.ok){host.append(hintText('読み込めませんでした: '+r.error));return;}
     const linked=r.value.filter(c=>c.state==='connected'),available=r.value.filter(c=>c.state!=='connected');
-    const row=c=>{const b=el('button','settings-row settings-link');b.type='button';b.append(tile(c.name||c.id),rowText(c.name||c.id,c.description),el('span','settings-value',c.state==='connected'?'連携済み':'連携する'),icon('i-external','settings-chevron'));b.addEventListener('click',()=>openUrl('https://muse.ai/'));return b;};
+    const row=c=>{const b=el('button','settings-row settings-link');b.type='button';const t=tile(c.name||c.id);connectorIcon(t,c.id);b.append(t,rowText(c.name||c.id,c.description),el('span','settings-value',c.state==='connected'?'連携済み':'連携する'),icon('i-external','settings-chevron'));b.addEventListener('click',()=>openUrl('https://muse.ai/'));return b;};
     if(linked.length)host.append(label('連携済み'),group(linked.map(row)));
     if(available.length)host.append(label('利用可能'),group(available.map(row)));
     if(!linked.length&&!available.length)host.append(hintText('コネクターはありません。'));

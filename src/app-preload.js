@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('muse',Object.freeze({
   themes:()=>ipcRenderer.invoke('muse:themes'),
   settingsOverview:()=>ipcRenderer.invoke('muse:settings-overview'),
   setTheme:id=>ipcRenderer.invoke('muse:set-theme',id),
+  connectorIcon:id=>ipcRenderer.invoke('muse:connector-icon',id),
   setPermissionDefaults:value=>ipcRenderer.invoke('muse:set-permission-defaults',value),
   activity:()=>ipcRenderer.invoke('muse:activity'),
   openLink:url=>ipcRenderer.invoke('muse:open-link',url),

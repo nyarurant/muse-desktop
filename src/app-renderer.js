@@ -12,9 +12,7 @@ function isCurrent(payload){return payload?.is_thread?payload.session_id===state
 function busy(){return state.busy.get(state.selected)===true||state.pcRun?.sessionId===state.selected;}
 function controls(){
   const connected=state.connected;
-  const pc=state.pcConnected;
-  $('send').disabled=!connected||state.loading||state.connecting||busy()||!!state.pending||(pc&&!!state.pcRun)||(!$('prompt').value.trim()&&(pc||!state.attachments.length));
-  $('prompt').maxLength=pc?20000:100000;
+  $('send').disabled=!connected||state.loading||state.connecting||busy()||!!state.pending||(!$('prompt').value.trim()&&!state.attachments.length);
   renderPcLog();
   $('stop').hidden=!connected||!busy();
   updateAvatarVideo();
@@ -70,10 +68,10 @@ async function loadIdentity(){
   if(!identity)return;
   state.identity=identity;
   const name=identity.name||'Muse';
-  $('profileName').textContent=name;$('welcomeTitle').textContent=name;$('avatarFallback').textContent=name.slice(0,1).toUpperCase();
+  $('profileName').textContent=name;$('welcomeTitle').textContent=name;$('headerName').textContent=name;$('avatarFallback').textContent=name.slice(0,1).toUpperCase();
   document.title=name+' — Muse';
   if(identity.imagePath){
-    try{const url=await call('avatar',identity.imagePath);if(url){for(const id of ['avatarImage','welcomeAvatar']){$(id).src=url;$(id).hidden=false;}$('avatarFallback').hidden=true;}}catch{}
+    try{const url=await call('avatar',identity.imagePath);if(url){for(const id of ['avatarImage','welcomeAvatar','headerAvatar']){$(id).src=url;$(id).hidden=false;}$('avatarFallback').hidden=true;}}catch{}
   }
   loadAvatarVideos(identity.videos||{}).catch(()=>{});
 }
@@ -427,11 +425,20 @@ async function renderLibrary(body,token,tab='artifacts'){
     const grid=el('div','media-grid');
     for(const e of entries){const b=el('button');b.title=e.name+'（クリックで保存）';b.append(lazyImage(e.path,e.name));b.addEventListener('click',save(e));grid.append(b);}
     body.append(grid);
-  }else for(const e of entries){
-    const row=el('div','file-row'),box=el('span','activity-icon');box.append(icon('file'));
-    const text=el('div','file-text');text.append(el('div','file-name',e.name),el('div','file-meta',[formatSize(e.size||0),new Date(e.modified_ms).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})].join(' · ')));
-    const dl=el('button','icon-button muted');dl.title='保存';dl.setAttribute('aria-label',e.name+' を保存');dl.append(icon('download'));dl.addEventListener('click',save(e));
-    row.append(box,text,dl);body.append(row);
+  }else{
+    // Cards like the web library: a preview area (file type), then icon, name and size / date.
+    const card=e=>{
+      const b=el('button','lib-card');b.type='button';b.title=e.name+'（クリックで保存）';b.addEventListener('click',save(e));
+      const ext=(String(e.name).match(/\.([A-Za-z0-9]{1,6})$/)||[])[1]||'';
+      const preview=el('div','lib-preview');preview.append(el('span','lib-ext',ext.toUpperCase()||'FILE'));
+      const foot=el('div','lib-foot'),box=el('span','lib-icon');box.append(icon('file'));
+      const text=el('div','lib-text');text.append(el('div','lib-name',e.name),el('div','lib-meta',[ext.toUpperCase()||'ファイル',formatSize(e.size||0),new Date(e.modified_ms).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})].join(' · ')));
+      foot.append(box,text);b.append(preview,foot);return b;
+    };
+    const sorted=entries.slice().sort((a,b)=>(b.modified_ms||0)-(a.modified_ms||0));
+    const grid=list=>{const g=el('div','lib-grid');g.append(...list.map(card));return g;};
+    if(sorted.length>4)body.append(el('h3','page-section-title','最近'),grid(sorted.slice(0,4)),el('h3','page-section-title','すべてのファイル'));
+    body.append(grid(sorted));
   }
   if(!entries.length)body.append(hint(tab==='media'?'画像はまだありません。':'ファイルはまだありません。'));
   else if(data.has_more)body.append(hint('ほかに '+(data.total-entries.length)+' 件あります。'));
@@ -505,6 +512,7 @@ async function loadActivity(){
     for(const a of g.items.sort((x,y)=>new Date(y.timestamp)-new Date(x.timestamp)))host.append(activityNode(a));
   }
   if(!host.childElementCount){const p=document.createElement('p');p.className='list-hint';p.textContent='アクティビティはまだありません。';host.append(p);}
+  window.refreshOpenActivity?.([...groups.values()].flatMap(g=>g.items));
 }
 function setTab(tab){
   state.tab=tab;
@@ -676,11 +684,10 @@ async function send(){
   state.pending={text:shown,sessionId:id,time:Date.now(),files:attachments,resources:[]};state.busy.set(id,true);controls();
   input.value='';state.drafts.set(id,'');state.attachments=[];state.replyTo=null;renderComposerExtras();resizeInput();await renderMessages({forceBottom:true});
   try{
-    const pc=state.pcConnected;
-    const result=await call(pc?'pcStart':'send',text,id,{replyTo:replyTo?.id,attachments:attachments.map(a=>({name:a.name,type:a.type,data:a.data}))});
-    // PC start acknowledges the local run, not the remote thread creation.
-    // pc-sent removes the draft only after Muse acknowledges the first message.
-    if(!pc){state.draftSessions.delete(id);if(state.selected===id){state.selected=sessionAfterSend(id,result);await call('subscribe',state.selected);scheduleHistory();await refreshSessions();}}
+    // Every chat message takes the normal route. While the PC is connected Muse can call its
+    // device commands from any conversation, so no separate PC send path is needed.
+    const result=await call('send',text,id,{replyTo:replyTo?.id,attachments:attachments.map(a=>({name:a.name,type:a.type,data:a.data}))});
+    state.draftSessions.delete(id);if(state.selected===id){state.selected=sessionAfterSend(id,result);await call('subscribe',state.selected);scheduleHistory();await refreshSessions();}
   }
   catch(e){
     state.pending=null;state.busy.set(id,false);
@@ -803,3 +810,5 @@ safely(async()=>{$('autoResume').value=await call('autoResume')?'on':'off';})();
 renderApprovals();
 refreshPcState().catch(()=>{});
 safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);const login=await call('loginState');if(login.active)enterLogin(login.stage,login.message);else if(info.hasSession)await connect();else await call('login');})();
+// Avatar + name at the top once the conversation has scrolled away from its start (the web shows the same).
+$('transcript').addEventListener('scroll',()=>{document.body.classList.toggle('chat-scrolled',$('transcript').scrollTop>120);},{passive:true});

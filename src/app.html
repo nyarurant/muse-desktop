@@ -84,6 +84,7 @@
       <button class="pill-button" id="connect"><span class="status-dot" id="connectionDot"></span><span id="connectionLabel">接続する</span></button>
       <button class="icon-button muted" id="panelToggle" title="パネルを開く" aria-label="パネルを開く" hidden><svg><use href="#i-panel-right"/></svg></button>
     </div>
+    <div class="chat-header" id="chatHeader" aria-hidden="true"><span class="chat-header-avatar"><img id="headerAvatar" alt="" hidden></span><span class="chat-header-name" id="headerName"></span></div>
     <div class="notice" id="notice" role="status" aria-live="polite" hidden><span id="noticeText"></span><button id="dismissNotice" class="icon-button small" aria-label="通知を閉じる"><svg><use href="#i-close"/></svg></button></div>
     <section class="page-view" id="pageView" hidden><div class="page-column"><div class="page-heading"><h1 id="pageTitle"></h1><div class="page-tabs" id="pageTabs"></div></div><div id="pageBody"></div></div></section>
     <section class="page-view ws-page" id="workspaceView" aria-labelledby="workspaceTitle" hidden><div class="page-column">
