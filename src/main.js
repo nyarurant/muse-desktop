@@ -4,7 +4,6 @@ const os = require('node:os');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { resolveToolPath } = require('./local-agent');
 const { createPrefs, fitToDisplays, isMuseUrl } = require('./prefs');
 const {
   app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, screen, shell,
@@ -255,70 +254,14 @@ function executeLocal(command, capture = false, owner = null, settings = {}) {
 }
 
 
-// ---- Local agent bridge -------------------------------------------------
-// The agent loop itself lives in desktop-api.js (it owns the gateway client); everything that
-// touches this machine goes through here. There are no confirmations and no folder limits:
-// commands run like the manual runner, and file paths may be absolute or workspace-relative.
-// Only the single-run lock is shared with the tools window.
-async function executeAgentCall(call, owner) {
-  try {
-    if (active || workflowRunning) return {ok: false, output: 'Another local command or workflow is already running.'};
-    const root = workspace;
-    const target = call.path !== undefined || call.tool === 'list' ? resolveToolPath(root, call.path || '.') : null;
-    if ((call.tool !== 'run') && !target) return {ok: false, output: `Invalid path: ${call.path}`};
-    if (call.tool === 'run') {
-      const result = await executeLocal(call.command, true, owner);
-      const out = (result.output || '').trim();
-      return {
-        ok: !result.errored && result.code === 0,
-        output: `exit code: ${result.code ?? 'none'}${result.signal ? `, signal: ${result.signal}` : ''}${out ? `\n${out}` : ''}`,
-      };
-    }
-    if (call.tool === 'read') {
-      const stat = fs.statSync(target);
-      if (!stat.isFile()) return {ok: false, output: `Not a file: ${call.path}`};
-      if (stat.size > 2 * 1024 * 1024) return {ok: false, output: `File is too large to read (${stat.size} bytes): ${call.path}`};
-      const text = fs.readFileSync(target, 'utf8');
-      if (text.includes('\0')) return {ok: false, output: `Not a UTF-8 text file: ${call.path}`};
-      const lines = text.split(/\r?\n/);
-      const start = call.start || 1;
-      const end = Math.min(call.end || lines.length, lines.length);
-      const body = lines.slice(start - 1, end).map((line, i) => `${start + i}: ${line}`).join('\n');
-      return {ok: true, output: `${call.path} (${lines.length} lines, showing ${start}-${end})\n${body}`};
-    }
-    if (call.tool === 'list') {
-      const entries = fs.readdirSync(target, {withFileTypes: true});
-      const shown = entries.slice(0, 200).map(e => `${e.isDirectory() ? '[dir] ' : '[file] '}${e.name}`);
-      return {ok: true, output: `${call.path || '.'} (${entries.length} entries${entries.length > shown.length ? `, showing first ${shown.length}` : ''})\n${shown.join('\n')}`};
-    }
-    if (call.tool === 'write' || call.tool === 'edit') {
-      let content;
-      if (call.tool === 'write') content = call.content;
-      else {
-        const current = fs.readFileSync(target, 'utf8');
-        const first = current.indexOf(call.old);
-        if (first === -1) return {ok: false, output: `edit: the old text was not found in ${call.path}.`};
-        if (current.indexOf(call.old, first + 1) !== -1) return {ok: false, output: `edit: the old text occurs more than once in ${call.path}; include more surrounding context.`};
-        content = current.slice(0, first) + call.new + current.slice(first + call.old.length);
-      }
-      fs.mkdirSync(path.dirname(target), {recursive: true});
-      fs.writeFileSync(target, content, 'utf8');
-      sendTools('tools:output', `[${call.tool}] ${target}\n`);
-      return {ok: true, output: `${call.tool === 'write' ? 'Wrote' : 'Edited'} ${call.path} (${content.length} characters).`};
-    }
-    return {ok: false, output: `Unsupported tool: ${call.tool}`};
-  } catch (error) {
-    return {ok: false, output: error.message};
-  }
-}
+// ---- Local bridge -------------------------------------------------------
+// Native device commands (system.run etc.) from Muse run through here, sharing the single-run
+// lock with the local work page. There are no confirmations and no folder limits.
 function createLocalBridge() {
   return {
     workspace: () => workspace,
-    platform: () => process.platform,
     isBusy: () => Boolean(active) || workflowRunning,
-    report: (text) => sendTools('tools:output', text),
     agentStatus: (state) => sendTools('tools:agent-status', state),
-    executeCall: (call, owner) => executeAgentCall(call, owner),
     runNative: async (params, owner) => {
       if(active||workflowRunning)return {ok:false,error:'Another local command or workflow is already running.'};
       const started=Date.now();const result=await executeLocal(params.command,true,owner,params);

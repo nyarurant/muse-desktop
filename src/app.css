@@ -163,12 +163,6 @@ svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width:
 
 /* Composer */
 .composer-area { flex-shrink: 0; padding: 0 24px 16px; }
-/* PC toggle sits in the composer next to +: muted when off, a green dot when on. */
-.pc-toggle { left: 46px; right: auto; color: var(--muted); }
-.pc-toggle:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.pc-toggle svg { width: 19px; height: 19px; }
-.pc-toggle[aria-pressed="true"] { color: var(--text); }
-.pc-toggle[aria-pressed="true"]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: #31c75d; box-shadow: 0 0 0 2px var(--surface-solid, #2c2c2c); }
 .pc-log { max-width: 768px; margin: 0 auto 10px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 13px; }
 .pc-log > summary { cursor: pointer; min-height: 28px; line-height: 28px; }
 #pcLogEntries { max-height: 180px; overflow: auto; }
@@ -336,7 +330,7 @@ button.settings-row:active { background: var(--chip-active); }
 .primary-button.danger { background: var(--danger); color: #fff; }
 
 /* Composer: reply target and attachments */
-.composer { padding-left: 86px; }
+.composer { padding-left: 52px; }
 .attach-button { left: 12px; right: auto; color: var(--muted); }
 .attach-button:hover { background: var(--hover); color: var(--text); }
 .attach-button svg { width: 20px; height: 20px; }
@@ -391,6 +385,11 @@ button.settings-row:active { background: var(--chip-active); }
 .ws-row-value { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--muted); }
 .ws-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
 .ws-chevron { width: 16px; height: 16px; color: var(--muted); }
+.ws-switch { position: relative; flex-shrink: 0; width: 40px; height: 24px; border-radius: 9999px; background: var(--chip); transition: background-color .15s; }
+.ws-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text); transition: transform .15s; }
+.ws-switch[aria-checked="true"] { background: #31c75d; }
+.ws-switch[aria-checked="true"]::after { transform: translateX(16px); background: #fff; }
+.ws-switch:disabled { opacity: .5; }
 .ws-note { margin: 10px 4px 0; font-size: 13px; line-height: 18px; color: var(--muted); }
 .ws-lead { margin: -2px 0 10px; }
 .ws-inline { margin: 0 0 0 4px; }

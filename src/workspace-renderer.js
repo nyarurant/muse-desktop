@@ -30,6 +30,8 @@
     const connected=pc?.connected===true;
     byId('wsPcDot').className='status-dot'+(connected?' connected':'');
     byId('wsPcText').textContent=connected?'接続中':'未接続';
+    byId('wsPcMode').setAttribute('aria-checked',String(connected));
+    byId('wsPcModeText').textContent=connected?'オン':'オフ';
     if(pc?.workspace)byId('wsFolder').textContent=pc.workspace;
   }
   async function refreshPc(){try{const r=await window.muse.pcState();if(r.ok)renderPc(r.value);}catch{}}
@@ -53,6 +55,7 @@
   window.muse.onEvent(value=>{if(value.type==='pc-connection')refreshPc();});
 
   byId('wsPcSetup').addEventListener('click',()=>window.openPcSetup?.());
+  byId('wsPcMode').addEventListener('click',async()=>{const b=byId('wsPcMode');b.disabled=true;try{await window.togglePc?.();}finally{b.disabled=false;refreshPc();}});
   byId('wsChoose').addEventListener('click',async()=>{
     try{byId('wsFolder').textContent=await api.chooseFolder();}catch(e){append('\n[エラー] '+e.message+'\n');}
   });

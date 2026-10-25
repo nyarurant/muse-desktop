@@ -14,9 +14,6 @@ function controls(){
   const connected=state.connected;
   const pc=state.pcConnected;
   $('send').disabled=!connected||state.loading||state.connecting||busy()||!!state.pending||(pc&&!!state.pcRun)||(!$('prompt').value.trim()&&(pc||!state.attachments.length));
-  $('pcMode').disabled=!connected||!!state.pcRun;
-  const pcLabel=pc?'このPC: オン（作業フォルダー: '+state.pcWorkspace+'）':'このPC: オフ — 押すと、この会話から PC を操作できます';
-  $('pcMode').setAttribute('aria-pressed',String(pc));$('pcMode').title=pcLabel;$('pcMode').setAttribute('aria-label',pcLabel);
   $('prompt').maxLength=pc?20000:100000;
   renderPcLog();
   $('stop').hidden=!connected||!busy();
@@ -620,13 +617,13 @@ async function refreshPcState(){
   if(pc.running&&!state.pcRun)state.pcRun={state:'running',sessionId:pc.sessionId,phase:'thinking'};
   if(!pc.running)state.pcRun=null;controls();
 }
-$('pcMode').addEventListener('click',safely(async()=>{
+// The on/off switch lives on the local work page (the composer no longer carries it).
+window.togglePc=safely(async()=>{
   await refreshPcState();
   if(state.pcConnected)await call('pcDisconnect');
   else {const auth=await call('pcAuthState');if(!auth.hasDevice){await window.openPcSetup();return;}await call('pcConnect');}
   await refreshPcState();
-  controls();$('prompt').focus();
-}));
+});
 window.onPcSetupConnected=()=>{refreshPcState().catch(()=>{});};
 window.addEventListener('focus',()=>{refreshPcState().catch(()=>{});});
 // ---- Login screen (login is required; the main process places Meta's page over #loginFrame) ----
