@@ -3,7 +3,8 @@
 // body or around the PC are told to her in a dedicated side chat, and she moves the body herself with the
 // PC commands companion.act / companion.info. Nothing here moves the body.
 //
-// Told: clicks on her, the cursor resting on her, dozing off and being woken (from the companion), the
+// Told: clicks on her, the cursor resting on her, dozing off and being woken, a full-screen app (a game)
+// starting and ending (from the companion), the
 // user coming back after 10+ minutes away (system idle time, so games and keyboards count), and a check-in
 // every 5 minutes while the user is around. Several events within a minute go out as one message.
 const fs = require('node:fs');
@@ -22,6 +23,8 @@ function describe(e) {
     case 'doze': return '放っておかれて、うとうとし始めた';
     case 'woke': return 'ユーザーがマウスを動かして、居眠りから起こされた';
     case 'returned': return `ユーザーが ${e.minutes} 分ぶりに PC に戻ってきた`;
+    case 'game-start': return 'ユーザーが全画面のアプリ（ゲームや動画）を使い始めた。身体は画面の下に隠れて、ときどき隅からひょこっと出る（話しかけたり表情を出したりすると、そのときも出る）';
+    case 'game-end': return 'ユーザーが全画面のアプリを閉じた。身体はいつもの場所に戻った';
     case 'checkin': return e.idle < 60 ? '（定期）ユーザーは PC を操作中' : `（定期）ユーザーは ${Math.round(e.idle / 60)} 分ほど PC を触っていない`;
     default: return null;
   }
