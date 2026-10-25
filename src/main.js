@@ -77,7 +77,11 @@ function openMuse({show = true} = {}) {
     show: false,
     icon: iconPath,
     backgroundColor: '#181819',
-    autoHideMenuBar: true, // Alt shows the menu.
+    autoHideMenuBar: true,
+    // The app draws its own title bar in its colors; Windows keeps the real min / max / close buttons.
+    // The menu stays for its keyboard shortcuts.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {color: '#181819', symbolColor: '#ffffff', height: 32},
     webPreferences: {
       nodeIntegration: false, contextIsolation: true, sandbox: true,
       webviewTag: false,

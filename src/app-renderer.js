@@ -55,6 +55,15 @@ function applyTheme(){
   const bot=pick('botBubble');
   const values={'--bg':bg,'--user-bubble':pick('userBubble'),'--user-text':pick('userText'),'--bot-bubble':bot&&bg&&mode==='dark'?mix(bot,bg,.4):bot,'--bot-text':pick('botText')};
   for(const [n,v] of Object.entries(values)){if(v)root.setProperty(n,v);else root.removeProperty(n);}
+  syncTitleBar();
+}
+// Window buttons on the app-drawn title bar follow the app background and the light / dark mode.
+let titleBarColors='';
+function syncTitleBar(){
+  const rgb=getComputedStyle(document.body).backgroundColor.match(/\d+/g);if(!rgb)return;
+  const color='#'+rgb.slice(0,3).map(v=>Number(v).toString(16).padStart(2,'0')).join('');
+  const symbol=effectiveMode()==='light'?'#111112':'#ffffff',key=color+symbol;
+  if(key===titleBarColors)return;titleBarColors=key;window.muse.titleBar({color,symbol}).catch(()=>{});
 }
 function effectiveMode(){const t=document.documentElement.dataset.theme;return t==='light'||(t==='system'&&!darkQuery.matches)?'light':'dark';}
 function setThemeMode(mode,persist=true){
@@ -69,7 +78,7 @@ async function loadIdentity(){
   state.identity=identity;
   const name=identity.name||'Muse';
   $('profileName').textContent=name;$('welcomeTitle').textContent=name;$('headerName').textContent=name;$('avatarFallback').textContent=name.slice(0,1).toUpperCase();
-  document.title=name+' — Muse';
+  document.title=name+' — Muse';$('titlebarTitle').textContent=document.title;
   if(identity.imagePath){
     try{const url=await call('avatar',identity.imagePath);if(url){for(const id of ['avatarImage','welcomeAvatar','headerAvatar']){$(id).src=url;$(id).hidden=false;}$('avatarFallback').hidden=true;}}catch{}
   }

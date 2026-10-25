@@ -60,7 +60,11 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; height: 100vh; display: flex; overflow: hidden; background: var(--bg); }
+body { margin: 0; height: 100vh; display: flex; overflow: hidden; background: var(--bg); padding-top: 32px; }
+/* App-drawn title bar (Windows draws its own min / max / close buttons on the right, in matching colors). */
+.titlebar { position: fixed; top: 0; left: 0; right: 0; z-index: 50; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--bg); color: var(--muted); font-size: 12px; line-height: 16px; user-select: none; -webkit-app-region: drag; }
+.titlebar img { width: 16px; height: 16px; border-radius: 4px; }
+.titlebar span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-right: 150px; }
 button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; border: 0; background: none; padding: 0; }
 button:disabled { cursor: default; opacity: .4; }

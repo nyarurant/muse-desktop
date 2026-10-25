@@ -239,6 +239,12 @@ function setupDesktop({getWindow,localBridge}) {
   function handle(name,fn){ipcMain.handle('muse:'+name,async(event,...args)=>{assertSender(event);try{return {ok:true,value:await fn(...args)};}catch(e){return {ok:false,error:e.message};}});}
   const validId=id=>{if(typeof id!=='string'||id.length>255)throw new Error('会話 ID が正しくありません。');return id;};
   handle('info',()=>({version:app.getVersion(),status:client.status,hasSession:!!client.credentials,platform:process.platform}));
+  // Recolor the window buttons on the app-drawn title bar when the theme changes.
+  handle('title-bar',({color,symbol}={})=>{
+    const hex=/^#[0-9a-f]{6}$/i;if(!hex.test(color||'')||!hex.test(symbol||''))throw new Error('色が正しくありません。');
+    const w=getWindow();if(w&&!w.isDestroyed()&&typeof w.setTitleBarOverlay==='function')w.setTitleBarOverlay({color,symbolColor:symbol,height:32});
+    return true;
+  });
   handle('pc-state',pcState);
   handle('pc-guard',()=>pcGuard);
   handle('set-pc-guard',enabled=>{

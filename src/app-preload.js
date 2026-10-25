@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('muse',Object.freeze({
   history:(id,before)=>ipcRenderer.invoke('muse:history',id,before),
   send:(text,id,extra)=>ipcRenderer.invoke('muse:send',text,id,extra),
   pcState:()=>ipcRenderer.invoke('muse:pc-state'),
+  titleBar:colors=>ipcRenderer.invoke('muse:title-bar',colors),
   pcGuard:()=>ipcRenderer.invoke('muse:pc-guard'),
   setPcGuard:enabled=>ipcRenderer.invoke('muse:set-pc-guard',enabled),
   pcStart:(text,id,extra)=>ipcRenderer.invoke('muse:pc-start',text,id,extra),
