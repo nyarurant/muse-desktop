@@ -840,6 +840,8 @@ $('approvalMode').addEventListener('change',safely(async e=>{const el=e.target;t
 safely(async()=>{$('approvalMode').value=await call('approvalMode');})();
 $('autoResume').addEventListener('click',safely(async()=>{const sw=$('autoResume'),next=sw.getAttribute('aria-checked')!=='true';sw.disabled=true;try{sw.setAttribute('aria-checked',String(!!await call('setAutoResume',next)));}finally{sw.disabled=false;}}));
 safely(async()=>{$('autoResume').setAttribute('aria-checked',String(!!await call('autoResume')));})();
+$('companionLink').addEventListener('click',safely(async()=>{const sw=$('companionLink'),next=sw.getAttribute('aria-checked')!=='true';sw.disabled=true;try{sw.setAttribute('aria-checked',String(!!await call('setCompanionLink',next)));}finally{sw.disabled=false;}}));
+safely(async()=>{$('companionLink').setAttribute('aria-checked',String(!!(await call('companionLink'))?.enabled));})();
 renderApprovals();
 refreshPcState().catch(()=>{});
 safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);const login=await call('loginState');if(login.active)enterLogin(login.stage,login.message);else if(info.hasSession)await connect();else await call('login');})();

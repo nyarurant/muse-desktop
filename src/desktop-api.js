@@ -3,7 +3,8 @@ const fs=require('node:fs');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {pathToFileURL}=require('node:url');
-const {app,ipcMain,dialog,safeStorage,session,shell,WebContentsView}=require('electron');
+const {app,ipcMain,dialog,powerMonitor,safeStorage,session,shell,WebContentsView}=require('electron');
+const {createCompanionLink}=require('./companion-link');
 const MarkdownIt=require('markdown-it');
 const WebSocket=require('ws');
 const {MuseClient}=require('./muse-client');
@@ -428,6 +429,18 @@ function setupDesktop({getWindow,localBridge}) {
   setInterval(()=>{if(resume.enabled&&client.status==='connected')checkResume().catch(()=>{});},2*60*1000).unref?.();
   handle('auto-resume',()=>resume.enabled);
   handle('set-auto-resume',enabled=>{resume.enabled=enabled===true;saveResume();if(resume.enabled)scheduleResume(1000);return resume.enabled;});
+  // Muse's 3D desktop body (kaguya-companion): what happens to it goes to her side chat, and she moves it
+  // herself with the companion.act / companion.info PC commands (src/companion-link.js).
+  const companionLink=createCompanionLink({dataDir,
+    send:(text,id)=>client.status==='connected'?client.send(text,id,nodeId):Promise.reject(new Error('not connected')),
+    rename:(id,title)=>client.request('POST','/session/rename',{session_id:id,title}),
+    sessions:()=>client.sessions(),
+    title:async()=>{const r=await client.request('GET','/identity');return (typeof r?.name==='string'&&r.name.trim()?r.name.trim().slice(0,40):'Muse')+' の身体';},
+    idleSeconds:()=>powerMonitor.getSystemIdleTime(),
+    log:(...args)=>console.warn(...args)});
+  companionLink.start();
+  handle('companion-link',()=>companionLink.status());
+  handle('set-companion-link',on=>companionLink.setEnabled(on===true));
   handle('approval-mode',()=>approvalMode);
   handle('set-approval-mode',async mode=>{
     if(!APPROVAL_MODES.includes(mode))throw new Error('承認モードの指定が正しくありません。');

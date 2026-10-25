@@ -45,6 +45,8 @@ contextBridge.exposeInMainWorld('muse',Object.freeze({
   approvals:()=>ipcRenderer.invoke('muse:approvals'),
   decide:(id,decision)=>ipcRenderer.invoke('muse:decide',id,decision),
   autoResume:()=>ipcRenderer.invoke('muse:auto-resume'),
+  companionLink:()=>ipcRenderer.invoke('muse:companion-link'),
+  setCompanionLink:on=>ipcRenderer.invoke('muse:set-companion-link',on),
   setAutoResume:enabled=>ipcRenderer.invoke('muse:set-auto-resume',enabled),
   approvalMode:()=>ipcRenderer.invoke('muse:approval-mode'),
   setApprovalMode:mode=>ipcRenderer.invoke('muse:set-approval-mode',mode),
