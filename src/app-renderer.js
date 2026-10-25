@@ -78,7 +78,7 @@ async function loadIdentity(){
   state.identity=identity;
   const name=identity.name||'Muse';
   $('profileName').textContent=name;$('welcomeTitle').textContent=name;$('headerName').textContent=name;$('avatarFallback').textContent=name.slice(0,1).toUpperCase();
-  document.title=name+' — Muse';$('titlebarTitle').textContent=document.title;
+  document.title=name+' — Muse';
   if(identity.imagePath){
     try{const url=await call('avatar',identity.imagePath);if(url){for(const id of ['avatarImage','welcomeAvatar','headerAvatar']){$(id).src=url;$(id).hidden=false;}$('avatarFallback').hidden=true;}}catch{}
   }
