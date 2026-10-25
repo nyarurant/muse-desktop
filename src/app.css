@@ -160,6 +160,16 @@ svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width:
 
 /* Composer */
 .composer-area { flex-shrink: 0; padding: 0 24px 16px; }
+.pc-bar { max-width: 768px; margin: 0 auto 8px; display: flex; align-items: center; gap: 10px; }
+.pc-toggle { flex-shrink: 0; min-height: 44px; }
+.pc-toggle[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.pc-hint { font-size: 12px; line-height: 1.5; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.pc-bar > .icon-button { flex-shrink: 0; min-width: 44px; min-height: 44px; margin-left: auto; }
+.pc-log { max-width: 768px; margin: 0 auto 10px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 13px; }
+.pc-log > summary { cursor: pointer; min-height: 28px; line-height: 28px; }
+#pcLogEntries { max-height: 180px; overflow: auto; }
+.pc-log pre, .pc-result pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; font-size: 12px; }
+.pc-result > summary { cursor: pointer; min-height: 32px; line-height: 32px; }
 .composer, .approvals { max-width: 768px; margin: 0 auto; }
 .composer { position: relative; min-height: 58px; padding: 12px 88px 12px 20px; border-radius: 32px; background: var(--surface); border: 1px solid transparent; display: flex; align-items: center; }
 .composer textarea { display: block; width: 100%; resize: none; border: 0; outline: 0 !important; background: transparent; color: var(--text); font-size: 15px; line-height: 24px; height: 24px; max-height: 200px; padding: 4px 0; box-sizing: content-box; }
@@ -358,3 +368,156 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); }
   .bubble { max-width: 92%; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* Append to app.css after the existing dialog styles. All colors come from
+   the existing Muse dark/light tokens. */
+#pcSetupDialog {
+  width: min(520px, calc(100% - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+#pcSetupDialog form {
+  min-width: 0;
+}
+
+.pc-setup-status {
+  min-height: 20px;
+  margin: 12px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pc-setup-status[data-kind="error"] {
+  color: var(--danger);
+}
+
+.pc-setup-copy {
+  margin: 12px 0 4px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.pc-setup-field {
+  display: block;
+  margin-top: 12px;
+}
+
+.pc-setup-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.pc-setup-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pc-setup-field .dialog-input {
+  margin: 0;
+}
+
+.pc-setup-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pc-setup-terms input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--unread);
+  flex-shrink: 0;
+}
+
+.pc-setup-terms a,
+.pc-setup-link {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.pc-setup-code-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pc-setup-code-wrap .dialog-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.pc-setup-reveal {
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.pc-setup-choice-group {
+  min-width: 0;
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.pc-setup-choice-group legend {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.pc-setup-choices {
+  display: grid;
+  gap: 8px;
+}
+
+.pc-setup-choice {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  text-align: left;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.pc-setup-choice:hover:not(:disabled),
+.pc-setup-choice:focus-visible {
+  background: var(--hover);
+  border-color: var(--muted);
+}
+
+.pc-setup-link {
+  height: 36px;
+  padding: 0 4px;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#pcSetupDialog[aria-busy="true"] .pc-setup-status::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.1s infinite;
+}

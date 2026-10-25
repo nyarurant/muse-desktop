@@ -1,6 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const state={connected:false,connecting:false,sessions:[],selected:'',messages:[],hasMore:false,loading:false,loadId:0,pending:null,busy:new Map(),drafts:new Map(),draftSessions:new Set(),approvals:[],autoApproved:new Set(),archived:[],showArchived:false,attachments:[],replyTo:null,renderId:0,activityText:'',identity:null,themes:null,tab:'activity'};
+state.pcConnected=false;state.pcRun=null;state.pcWorkspace='';state.pcLogs=new Map();
 const darkQuery=window.matchMedia('(prefers-color-scheme: dark)');
 async function call(name,...args){const r=await window.muse[name](...args);if(!r.ok)throw new Error(r.error);return r.value;}
 function notice(message){$('noticeText').textContent=message;$('notice').hidden=false;}
@@ -8,10 +9,17 @@ function safely(fn){return async(...args)=>{try{return await fn(...args);}catch(
 function remember(key,value){try{localStorage.setItem(key,value);}catch{}}
 function recall(key){try{return localStorage.getItem(key);}catch{return null;}}
 function isCurrent(payload){return payload?.is_thread?payload.session_id===state.selected:state.selected==='';}
-function busy(){return state.busy.get(state.selected)===true;}
+function busy(){return state.busy.get(state.selected)===true||state.pcRun?.sessionId===state.selected;}
 function controls(){
   const connected=state.connected;
-  $('send').disabled=!connected||state.loading||state.connecting||busy()||!!state.pending||(!$('prompt').value.trim()&&!state.attachments.length);
+  const pc=state.pcConnected;
+  $('send').disabled=!connected||state.loading||state.connecting||busy()||!!state.pending||(pc&&!!state.pcRun)||(!$('prompt').value.trim()&&(pc||!state.attachments.length));
+  $('pcMode').disabled=!connected||!!state.pcRun;
+  $('pcMode').setAttribute('aria-pressed',String(pc));$('pcMode').textContent='このPC: '+(pc?'オン':'オフ');
+  $('prompt').maxLength=pc?20000:100000;
+  $('pcHint').textContent=pc?'作業フォルダー: '+state.pcWorkspace:'オンにすると、この会話からPCのコマンド・ファイル操作を実行します。';
+  $('pcHint').title=pc?state.pcWorkspace:'';
+  renderPcLog();
   $('stop').hidden=!connected||!busy();
   $('thinking').hidden=!busy();
   $('refresh').disabled=!connected||state.loading;
@@ -260,7 +268,7 @@ async function renderMessages({forceBottom=false}={}){
     const article=existing.get(m.id)||messageNode(m);
     let html;
     if(article.message?.content!==m.content&&m.role==='assistant'){
-      try{html=await call('renderMarkdown',m.content);}catch{html=null;}
+      try{html=await call('renderMarkdown',localMessageView(m).content);}catch{html=null;}
       if(version!==state.renderId)return;
     }
     updates.push({m,article,html});
@@ -271,8 +279,13 @@ async function renderMessages({forceBottom=false}={}){
   for(let i=0;i<updates.length;i++){
     const {m,article,html}=updates[i],body=article.querySelector('.message-body');
     if(article.message?.content!==m.content){
-      if(m.role==='assistant'&&html!==null)body.innerHTML=html;
-      else{body.textContent=m.content;body.style.whiteSpace='pre-wrap';}
+      const view=localMessageView(m);
+      if(view.toolResults){
+        const detail=document.createElement('details');detail.className='pc-result';
+        const summary=document.createElement('summary');summary.textContent='このPCの実行結果';
+        const output=document.createElement('pre');output.textContent=view.content;detail.append(summary,output);body.replaceChildren(detail);
+      }else if(m.role==='assistant'&&html!==null)body.innerHTML=html;
+      else{body.textContent=view.content;body.style.whiteSpace='pre-wrap';}
     }
     if(article.message?.reaction!==m.reaction){const rx=article.querySelector('.reaction');rx.textContent=m.reaction||'';rx.hidden=!m.reaction;}
     renderQuote(article,m,messages);
@@ -529,7 +542,58 @@ window.muse.onEvent(value=>{
   else if(value.type==='auto-resume'){notice('止まっていた「'+(value.title||'会話')+'」に再開を指示しました。');refreshSessions().catch(()=>{});if(value.id===state.selected)scheduleHistory();}
   else if(value.type==='reconnected')safely(async()=>{notice(value.keyChanged?KEY_CHANGED:'Muse に再接続しました。');await afterConnect();})();
   else if(value.type==='home')safely(()=>select(''))();
+  else if(value.type==='pc-connection'){state.pcConnected=value.connected===true;if(value.message&&!value.connected)notice(value.message);controls();}
+  else if(value.type==='pc-agent'){
+    if(value.state==='running')state.pcRun=value;
+    else if(state.pcRun?.sessionId===value.sessionId){state.pcRun=null;state.busy.set(value.sessionId,false);if(state.pending?.sessionId===value.sessionId)state.pending=null;}
+    if(value.message)notice(value.message);
+    if(value.state==='idle'&&value.sessionId===state.selected)scheduleHistory();
+    controls();
+  }
+  else if(value.type==='pc-sent'){
+    state.draftSessions.delete(value.sessionId);
+    if(state.pending?.sessionId===value.sessionId)state.pending=null;
+    if(value.sessionId===state.selected){
+      if(value.initial)safely(async()=>{await call('subscribe',value.sessionId);scheduleHistory();await refreshSessions();})();
+      else scheduleHistory();
+    }
+  }
+  else if(value.type==='pc-tool'){
+    if(value.phase==='complete'){
+      const list=state.pcLogs.get(value.sessionId)||[];
+      list.push({tool:value.tool,target:value.command||value.path||'.',ok:value.ok,output:value.output});
+      state.pcLogs.set(value.sessionId,list.slice(-20));
+    }
+    if(value.sessionId===state.selected)renderPcLog();
+  }
 });
+function renderPcLog(){
+  const run=state.pcRun?.sessionId===state.selected?state.pcRun:null;
+  const entries=state.pcLogs.get(state.selected)||[];
+  $('pcLog').hidden=!run&&!entries.length;
+  $('pcStatus').textContent=run?(run.phase==='executing'?'このPCで実行中: '+run.tool:'このPCの操作を考えています…'):'PCの実行ログ ('+entries.length+'件)';
+  const host=$('pcLogEntries');if(host.pcEntries===entries)return;host.pcEntries=entries;host.replaceChildren();
+  for(const e of entries){
+    const detail=document.createElement('details'),summary=document.createElement('summary'),output=document.createElement('pre');
+    summary.textContent=(e.ok?'完了: ':'失敗: ')+e.tool+' '+e.target;
+    output.textContent=e.output;detail.append(summary,output);host.append(detail);
+  }
+}
+async function refreshPcState(){
+  const pc=await call('pcState');state.pcWorkspace=pc.workspace||'';state.pcConnected=pc.connected===true;
+  if(pc.running&&!state.pcRun)state.pcRun={state:'running',sessionId:pc.sessionId,phase:'thinking'};
+  if(!pc.running)state.pcRun=null;controls();
+}
+$('pcMode').addEventListener('click',safely(async()=>{
+  await refreshPcState();
+  if(state.pcConnected)await call('pcDisconnect');
+  else {const auth=await call('pcAuthState');if(!auth.hasDevice){await window.openPcSetup();return;}await call('pcConnect');}
+  await refreshPcState();
+  controls();$('prompt').focus();
+}));
+window.onPcSetupConnected=()=>{refreshPcState().catch(()=>{});};
+$('pcFolder').addEventListener('click',safely(()=>call('openTools')));
+window.addEventListener('focus',()=>{refreshPcState().catch(()=>{});});
 // ---- Login screen (login is required; the main process places Meta's page over #loginFrame) ----
 const LOGIN_STEPS=['waiting','session','token','ready'];
 let loginObserver=null;
@@ -579,8 +643,11 @@ async function send(){
   state.pending={text:shown,sessionId:id,time:Date.now(),files:attachments,resources:[]};state.busy.set(id,true);controls();
   input.value='';state.drafts.set(id,'');state.attachments=[];state.replyTo=null;renderComposerExtras();resizeInput();await renderMessages({forceBottom:true});
   try{
-    const result=await call('send',text,id,{replyTo:replyTo?.id,attachments:attachments.map(a=>({name:a.name,type:a.type,data:a.data}))});
-    state.draftSessions.delete(id);if(state.selected===id){if(result.session_id&&result.session_id!==id)state.selected=result.session_id;await call('subscribe',state.selected);scheduleHistory();await refreshSessions();}
+    const pc=state.pcConnected;
+    const result=await call(pc?'pcStart':'send',text,id,{replyTo:replyTo?.id,attachments:attachments.map(a=>({name:a.name,type:a.type,data:a.data}))});
+    // PC start acknowledges the local run, not the remote thread creation.
+    // pc-sent removes the draft only after Muse acknowledges the first message.
+    if(!pc){state.draftSessions.delete(id);if(state.selected===id){if(result.session_id&&result.session_id!==id)state.selected=result.session_id;await call('subscribe',state.selected);scheduleHistory();await refreshSessions();}}
   }
   catch(e){
     state.pending=null;state.busy.set(id,false);
@@ -591,7 +658,7 @@ async function send(){
 }
 // ---- Reply target, attachments, sources ----
 // The echoed user message replaces the local placeholder (attachment-only messages echo different text).
-function pendingDelivered(m){const p=state.pending;return !!p&&m.role==='user'&&m.time>=p.time-5000&&(m.content===p.text||p.files?.length>0);}
+function pendingDelivered(m){const p=state.pending;return !!p&&m.role==='user'&&m.time>=p.time-5000&&(localMessageView(m).content===p.text||p.files?.length>0);}
 function snippet(text,max=80){return String(text||'').replace(/\s+/g,' ').trim().slice(0,max);}
 function startReply(m){state.replyTo={id:m.id,text:snippet(m.content),role:m.role};renderComposerExtras();$('prompt').focus();}
 function renderQuote(article,m,messages){
@@ -675,7 +742,6 @@ $('sidebarOptions').addEventListener('click',e=>{const b=e.currentTarget;showMen
 $('sidebarOptions').setAttribute('aria-haspopup','menu');
 $('transcript').addEventListener('scroll',closeMenu,{passive:true});
 $('newChat').addEventListener('click',safely(async()=>{const result=await call('startSession');const id=result.session_id;if(!id)throw new Error('新しい会話の ID を取得できませんでした。');state.draftSessions.add(id);await refreshSessions();await select(id);}));
-$('tools').addEventListener('click',safely(()=>call('openTools')));
 $('settings').addEventListener('click',()=>$('settingsDialog').showModal());
 $('closeSettings').addEventListener('click',()=>$('settingsDialog').close());
 $('settingsDialog').addEventListener('click',e=>{if(e.target===$('settingsDialog')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.target.close();}});
@@ -703,4 +769,5 @@ safely(async()=>{$('approvalMode').value=await call('approvalMode');})();
 $('autoResume').addEventListener('change',safely(async e=>{const el=e.target;el.value=await call('setAutoResume',el.value==='on')?'on':'off';}));
 safely(async()=>{$('autoResume').value=await call('autoResume')?'on':'off';})();
 renderApprovals();
+refreshPcState().catch(()=>{});
 safely(async()=>{const info=await call('info');$('dialogVersion').textContent='v'+info.version;setConnection(info.status);const login=await call('loginState');if(login.active)enterLogin(login.stage,login.message);else if(info.hasSession)await connect();else await call('login');})();

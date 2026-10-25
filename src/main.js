@@ -206,25 +206,26 @@ function endProcess(proc) {
 }
 
 // Local commands run without confirmation, through the shell, starting in the workspace folder.
-function executeLocal(command, capture = false) {
+function executeLocal(command, capture = false, owner = null, settings = {}) {
   if (active) throw new Error('Another command is already running');
   const options = {
-    cwd: workspace,
+    cwd: settings.cwd || workspace,
     shell: true,
     windowsHide: true,
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   };
   const proc = spawn(command, options);
-  active = { proc, total: 0, command };
-  let captured = '';
+  active = { proc, total: 0, command, owner };
+  let captured = '', stdout = '', stderr = '', timedOut = false, truncated = false;
   sendTools('tools:status', { state: 'running', command });
   const timeout = setTimeout(() => {
     if (active?.proc === proc) {
+      timedOut = true;
       sendTools('tools:output', '\n[10 minute execution limit reached; terminating]\n');
       endProcess(proc);
     }
-  }, MAX_RUNTIME_MS);
+  }, settings.timeout_ms || MAX_RUNTIME_MS);
   let errored = false;
   let completed = false;
   const done = new Promise((resolve) => {
@@ -234,11 +235,16 @@ function executeLocal(command, capture = false) {
       clearTimeout(timeout);
       if (active?.proc === proc) active = null;
       sendTools('tools:status', {state: 'idle', exitCode: code, signal});
-      resolve({ code, signal, errored, output: capture ? captured : undefined });
+      resolve({ code, signal, errored, output: capture ? captured : undefined, stdout, stderr, timedOut, truncated });
     }
-    const output = (buf) => {
+    const output = (buf, stream) => {
       if (!active || active.proc !== proc) return;
       if (capture && captured.length < 256 * 1024) captured += String(buf);
+      if (capture) {
+        const text=String(buf), previous=stream==='out'?stdout:stderr;
+        const next=Buffer.from(previous+text);if(next.length>96*1024)truncated=true;
+        if(stream==='out')stdout=next.subarray(0,96*1024).toString('utf8');else stderr=next.subarray(0,96*1024).toString('utf8');
+      }
       active.total += buf.length;
       if (active.total <= MAX_OUTPUT) sendTools('tools:output', String(buf));
       else {
@@ -246,8 +252,8 @@ function executeLocal(command, capture = false) {
         endProcess(proc);
       }
     };
-    proc.stdout?.on('data', output);
-    proc.stderr?.on('data', output);
+    proc.stdout?.on('data', buf=>output(buf,'out'));
+    proc.stderr?.on('data', buf=>output(buf,'err'));
     proc.once('error', (error) => {
       errored = true;
       sendTools('tools:output', `\n[Process error: ${error.message}]\n`);
@@ -265,14 +271,14 @@ function executeLocal(command, capture = false) {
 // touches this machine goes through here. There are no confirmations and no folder limits:
 // commands run like the manual runner, and file paths may be absolute or workspace-relative.
 // Only the single-run lock is shared with the tools window.
-async function executeAgentCall(call) {
+async function executeAgentCall(call, owner) {
   try {
     if (active || workflowRunning) return {ok: false, output: 'Another local command or workflow is already running.'};
     const root = workspace;
     const target = call.path !== undefined || call.tool === 'list' ? resolveToolPath(root, call.path || '.') : null;
     if ((call.tool !== 'run') && !target) return {ok: false, output: `Invalid path: ${call.path}`};
     if (call.tool === 'run') {
-      const result = await executeLocal(call.command, true);
+      const result = await executeLocal(call.command, true, owner);
       const out = (result.output || '').trim();
       return {
         ok: !result.errored && result.code === 0,
@@ -323,7 +329,13 @@ function createLocalBridge() {
     isBusy: () => Boolean(active) || workflowRunning,
     report: (text) => sendTools('tools:output', text),
     agentStatus: (state) => sendTools('tools:agent-status', state),
-    executeCall: (call) => executeAgentCall(call),
+    executeCall: (call, owner) => executeAgentCall(call, owner),
+    runNative: async (params, owner) => {
+      if(active||workflowRunning)return {ok:false,error:'Another local command or workflow is already running.'};
+      const started=Date.now();const result=await executeLocal(params.command,true,owner,params);
+      return {ok:!result.errored,payload:{stdout:result.stdout,stderr:result.stderr,exit_code:result.code,timed_out:result.timedOut,truncated:result.truncated,duration_ms:Date.now()-started}};
+    },
+    stop: (owner) => { if (active?.owner === owner) endProcess(active.proc); },
   };
 }
 
@@ -356,7 +368,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('tools:select-workspace', async (event) => {
     assertToolsSender(event);
-    if (active || workflowRunning) throw new Error('Stop running commands before changing workspace');
+    if (active || workflowRunning || desktop?.isAgentRunning?.()) throw new Error('Stop running commands before changing workspace');
     const result = await dialog.showOpenDialog(toolsWindow, {
       title: 'Choose a trusted workspace', defaultPath: workspace,
       properties: ['openDirectory', 'createDirectory'],

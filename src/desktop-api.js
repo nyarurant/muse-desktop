@@ -9,8 +9,12 @@ const {MuseClient}=require('./muse-client');
 const {MODES:APPROVAL_MODES,decide:decideApproval}=require('./muse-approval-policy');
 const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=require('./auto-resume');
 const {createWatcher: createLoginWatcher,MESSAGES: LOGIN_MESSAGES,timeoutMessage: loginTimeoutMessage}=require('./login-flow');
-const {runLoop: runAgentLoop,buildTaskMessage}=require('./local-agent');
 const {messageFromEvent}=require('./chat-model');
+const {waitForReply}=require('./agent-reply');
+const {PcAuth}=require('./pc-auth');
+const {createPcAuthStore}=require('./pc-auth-store');
+const {NativeDevice}=require('./native-device');
+const {createNativeExecutor}=require('./native-executor');
 const markdown=new MarkdownIt({html:false,linkify:true,breaks:true});
 const appUrl=pathToFileURL(path.join(__dirname,'app.html')).href;
 function setupDesktop({getWindow,openTools,localBridge}) {
@@ -59,88 +63,119 @@ function setupDesktop({getWindow,openTools,localBridge}) {
     const changed=keyChanged;keyChanged=false;
     return {status:client.status,keyChanged:changed};
   }
-  // ---- Local agent (Claude Code / Codex style) ----
-  // The brain is Muse in a dedicated side chat; the local work goes
-  // through main.js's bridge (no confirmations, no folder limits). Replies are awaited via gateway
-  // events, with a history poll as fallback (same message twice in a
-  // row counts as settled).
-  let agentRun=null;
-  // Muse streams its text and may post more than one message per turn, so a reply counts as
-  // settled only when its text is marked ready, it is unchanged over two polls, and the side chat
-  // is no longer running (or nothing has changed for 30 s).
-  const BUSY=new Set(['running','pending','queued','in_progress','started','waiting_for_approval']);
-  function waitAssistantReply(sessionId,baseline,timeoutMs=10*60*1000) {
-    return new Promise((resolve,reject)=>{
-      let last=null,since=0,checking=false;
-      const cleanup=()=>{clearTimeout(timer);clearInterval(poll);client.off('event',onEvent);};
-      const timer=setTimeout(()=>{cleanup();reject(new Error('Muse の応答がタイムアウトしました。'));},timeoutMs);
-      const check=async()=>{
-        if(checking)return;checking=true;
-        try {
-          const data=await client.history(sessionId);
-          const events=(data.chat_events||[]).filter(ev=>ev.display_text_ready!==false);
-          const msgs=events.map(messageFromEvent).filter(m=>m&&m.role==='assistant'&&m.content&&!baseline.has(m.id));
-          const latest=msgs[msgs.length-1];if(!latest)return;
-          if(!last||last.id!==latest.id||last.content!==latest.content){last=latest;since=Date.now();return;}
-          const detail=await client.request('GET','/api/session/list/'+encodeURIComponent(sessionId)).catch(()=>null);
-          const status=String((detail?.session||detail)?.status||'').toLowerCase();
-          if((status&&!BUSY.has(status))||Date.now()-since>=30000){cleanup();resolve(latest.content);}
-        } catch { /* the thread may not exist until the first send lands */ }
-        finally{checking=false;}
-      };
-      const onEvent=value=>{const p=value?.payload||{};if((p.session_id||value?.session_id)===sessionId)void check();};
-      client.on('event',onEvent);
-      const poll=setInterval(()=>{void check();},3000);
-      poll.unref?.();
-    });
-  }
-  async function runAgentTask(run,task) {
-    const baseline=new Set();
-    const snapshot=async()=>{try{const data=await client.history(run.sessionId);for(const ev of data.chat_events||[]){const m=messageFromEvent(ev);if(m)baseline.add(m.id);}}catch{}};
-    await snapshot();
-    const ask=async text=>{
-      const waiting=waitAssistantReply(run.sessionId,baseline);
-      await client.send(text,run.sessionId,nodeId);
-      const reply=await waiting;
-      await snapshot();
-      return reply;
-    };
-    const initial=buildTaskMessage({workspace:localBridge.workspace(),platform:localBridge.platform(),task});
-    const result=await runAgentLoop({
-      initialMessage:initial,ask,
-      execute:async call=>{
-        localBridge.report(`\n[Agent tool] ${call.tool}${call.command?' '+call.command:''}${call.path?' '+call.path:''}\n`);
-        const r=await localBridge.executeCall(call);
-        localBridge.report(`[${r.ok?'ok':'failed'}] ${String(r.output).slice(0,500)}\n`);
-        return r;
-      },
-      shouldStop:()=>run.stopped,
-      onStep:({step})=>localBridge.report(`\n[Agent step ${step} done]\n`),
-    });
-    localBridge.report(`\n[Agent ${result.status}] ${result.steps} step(s)\n${result.finalText||''}\n`);
-    emit('agent-done',{status:result.status,sessionId:run.sessionId});
+  // ---- Native PC authentication and structured device control ----
+  let pcAuth=null,agentRun=null,nativeDevice=null,pcConnecting=null,pcGeneration=0;
+  const nativeOwners=new Set();
+  const nativeExecutor=createNativeExecutor({workspace:()=>localBridge.workspace(),run:(params,owner)=>localBridge.runNative(params,owner)});
+  async function nativeRequest(scope,route,body,bearer) {
+    const root=scope==='auth'?'https://hatch-api.meta.ai':'https://api.muse.ai';
+    let response;
+    try{response=await session.defaultSession.fetch(root+route,{method:body===undefined?'GET':'POST',credentials:'omit',redirect:'error',headers:{'Content-Type':'application/json','X-API-Version':'1.0.0',...(bearer?{Authorization:'Bearer '+bearer}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(25000)});}
+    catch{throw new Error('Muse の PC 認証サービスへ接続できません。自動で再送はしません。');}
+    let result;try{result=await response.json();}catch{throw new Error('Muse の PC 認証応答を確認できません。');}
+    if(!response.ok)throw Object.assign(new Error('PC の認証を完了できませんでした（HTTP '+response.status+'）。入力内容と認証コードを確認してください。'),{status:response.status});
     return result;
   }
-  function startAgent(task) {
+  async function sdkRequest(method) {
+    let response;
+    try{response=await session.defaultSession.fetch('https://gadgets.muse.ai/api/sdk-tokens',{method,redirect:'error',headers:{'Content-Type':'application/json','Origin':'https://gadgets.muse.ai'},...(method==='POST'?{body:JSON.stringify({label:'Muse App Windows PC'})}:{}),signal:AbortSignal.timeout(20000)});}
+    catch{throw new Error('SDK トークンの応答を確認できません。自動で再発行はしません。');}
+    if(!response.ok)throw new Error('SDK トークンを準備できませんでした（HTTP '+response.status+'）。Muse へのログイン状態を確認してください。');
+    return response.json();
+  }
+  function auth() {
+    if(!pcAuth)pcAuth=new PcAuth({...createPcAuthStore({directory:dataDir,safeStorage}),request:nativeRequest,listSdk:()=>sdkRequest('GET'),issueSdk:()=>sdkRequest('POST'),expectedVm:async()=>{
+      const website=await fetchJson('/api/session');return website?.vm_id;
+    }});
+    return pcAuth;
+  }
+  function agentState(run,state,extra={}) {
+    const value={state,sessionId:run.viewSessionId,...extra};localBridge.agentStatus(value);emit('pc-agent',value);
+  }
+  async function connectPc() {
+    if(pcConnecting)return pcConnecting;
+    pcConnecting=connectPcOnce().finally(()=>{pcConnecting=null;});return pcConnecting;
+  }
+  async function connectPcOnce() {
+    const generation=pcGeneration;
+    if(nativeDevice?.connected)return pcState();
+    if(localBridge.isBusy())throw new Error('別のローカル操作が実行中です。');
+    const deviceAuth=auth();const vm=await deviceAuth.vm();
+    if(generation!==pcGeneration)throw new Error('PC の接続を中止しました。');
+    nativeDevice?.disconnect();
+    const device=new NativeDevice({commands:nativeExecutor.commands,displayName:require('node:os').hostname()+' (Windows PC)',execute:async(command,params,timeout,id)=>{
+      const owner='pc-native-'+id;nativeOwners.add(owner);
+      try{return await nativeExecutor.execute(command,params,timeout,owner);}finally{nativeOwners.delete(owner);}
+    }});
+    nativeDevice=device;
+    device.on('status',value=>{
+      if(nativeDevice!==device)return;
+      const message=value.message==='connecting'?'PC に接続しています…':value.connected?'この PC は Muse に直接接続しています。':'PC の直接接続が切れました。設定画面で再接続できます。';
+      emit('pc-connection',{...value,message});
+      if(!value.connected){
+        for(const owner of nativeOwners)localBridge.stop(owner);nativeExecutor.dispose();
+        const run=agentRun;
+        if(run&&!run.stopped){run.stopped=true;run.controller.abort();userCancels[run.viewSessionId]=Date.now();userCancels[run.sessionId]=Date.now();client.cancel(run.sessionId).catch(()=>{});agentState(run,'idle',{result:'error',message:'PC の直接接続が切れたため、操作を停止しました。'});if(agentRun===run)agentRun=null;}
+      }
+    });
+    device.on('invoke',value=>{
+      if(nativeDevice!==device)return;
+      const view=agentRun?.viewSessionId??'';
+      emit('pc-tool',{sessionId:view,phase:value.phase,tool:value.command,path:value.params?.path,command:value.params?.command,ok:!!value.result?.ok,output:value.result?JSON.stringify(value.result.payload??value.result.error).slice(0,32000):undefined});
+      if(agentRun)agentState(agentRun,'running',{phase:value.phase==='running'?'executing':'thinking',tool:value.command});
+    });
+    await device.connect({vm,nodeId:deviceAuth.saved.nodeId});
+    if(generation!==pcGeneration){device.disconnect();throw new Error('PC の接続を中止しました。');}
+    return pcState();
+  }
+  function pcState() {return {workspace:localBridge.workspace(),running:!!agentRun||nativeOwners.size>0,sessionId:agentRun?.viewSessionId,connected:!!nativeDevice?.connected};}
+  function authState() {const value=auth().snapshot();return nativeDevice?.connected?{...value,phase:'ready',message:'この PC は Muse に直接接続しています。'}:value;}
+  async function startAgent(task,{sessionId,extra={}}={}) {
     if(typeof task!=='string'||!task.trim()||task.length>20000)throw new Error('タスクを入力してください（上限 20,000 文字）。');
-    if(agentRun)throw new Error('エージェントは既に実行中です。');
-    if(!localBridge)throw new Error('ローカルブリッジが利用できません。');
-    if(client.status!=='connected')throw new Error('Muse に接続してからエージェントを開始してください。');
-    const run={sessionId:crypto.randomUUID(),stopped:false};
+    if(agentRun)throw new Error('この PC の操作が実行中です。');
+    if(client.status!=='connected')throw new Error('Muse に接続してください。');
+    if(!nativeDevice?.connected)throw new Error('先に「PC 接続の設定」でこの PC を認証して接続してください。');
+    if(localBridge.isBusy())throw new Error('別のローカル操作が実行中です。');
+    if(sessionId!==undefined)validId(sessionId);
+    const run={sessionId:sessionId??crypto.randomUUID(),viewSessionId:sessionId,owner:crypto.randomUUID(),controller:new AbortController(),stopped:false};
     agentRun=run;
-    localBridge.agentStatus({state:'running'});
-    localBridge.report(`\n[Agent started] session ${run.sessionId}\nTask: ${task.trim()}\n`);
-    runAgentTask(run,task.trim())
-      .catch(e=>localBridge.report(`\n[Agent error] ${e.message}\n`))
-      .finally(()=>{if(agentRun===run)agentRun=null;localBridge.agentStatus({state:'idle'});});
-    return {started:true,sessionId:run.sessionId};
+    let waiting;
+    try{
+      if(run.sessionId===''){
+        const primary=(await client.sessions())?.sessions?.find(s=>s.is_primary);
+        if(!primary?.session_id)throw new Error('メインチャットを取得できませんでした。');run.sessionId=primary.session_id;
+      }
+      if(run.viewSessionId===undefined)run.viewSessionId=run.sessionId;
+      const baseline=new Set();
+      if(!draftSessions.has(run.sessionId)){
+        const detail=await client.request('GET','/api/session/list/'+encodeURIComponent(run.sessionId));
+        if(['running','pending','queued','in_progress','started','waiting_for_approval'].includes(String((detail?.session||detail)?.status||'').toLowerCase()))throw new Error('この会話では Muse が作業中です。');
+        const history=await client.history(run.sessionId);for(const event of history.chat_events||[]){const message=messageFromEvent(event);if(message)baseline.add(message.id);}
+      }
+      agentState(run,'running',{phase:'thinking'});
+      // Only completion is observed in chat. Commands/results travel on /link-control.
+      waiting=waitForReply({client,sessionId:run.sessionId,baseline,signal:run.controller.signal});
+      waiting.promise.catch(()=>{});
+      run.sentAttempted=true;
+      const ack=await nativeDevice.send(task.trim(),run.sessionId,extra);waiting.accept(ack?.message_id);
+      draftSessions.delete(run.sessionId);emit('pc-sent',{sessionId:run.viewSessionId,initial:true});
+      await client.subscribeAgent(run.sessionId,run.owner);waiting.refresh();
+      waiting.promise.then(()=>agentState(run,'idle',{result:'complete'})).catch(e=>{
+        if(!run.stopped)agentState(run,'idle',{result:'error',message:e.message});
+      }).finally(()=>{waiting.cancel();client.closeAgentSubscription(run.owner);if(agentRun===run)agentRun=null;});
+      return {started:true,sessionId:run.sessionId,session_id:run.viewSessionId};
+    }catch(e){waiting?.cancel();if(run.sentAttempted&&agentRun===run)stopAgent();client.closeAgentSubscription(run.owner);if(agentRun===run)agentRun=null;agentState(run,'idle',{result:'error'});throw e;}
   }
   function stopAgent() {
-    if(!agentRun)return false;
-    agentRun.stopped=true;
-    userCancels[agentRun.sessionId]=Date.now(); // a stopped agent must not be auto-resumed
-    client.cancel(agentRun.sessionId).catch(()=>{});
-    return true;
+    const run=agentRun;
+    pcGeneration++;
+    if(run)run.stopped=true;
+    for(const owner of nativeOwners)localBridge.stop(owner);
+    nativeDevice?.disconnect();nativeExecutor.dispose();
+    if(!run)return nativeOwners.size>0;
+    run.controller.abort();client.closeAgentSubscription(run.owner);
+    userCancels[run.viewSessionId]=Date.now();userCancels[run.sessionId]=Date.now();client.cancel(run.sessionId).catch(()=>{});
+    agentState(run,'idle',{result:'stopped'});if(agentRun===run)agentRun=null;return true;
   }
   // Reconnect by itself after the connection drops (e.g. the VM restarted), so auto-approval and
   // auto-resume keep working. Stops when sign-in is needed; backs off 3 s -> 60 s.
@@ -166,11 +201,29 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   function handle(name,fn){ipcMain.handle('muse:'+name,async(event,...args)=>{assertSender(event);try{return {ok:true,value:await fn(...args)};}catch(e){return {ok:false,error:e.message};}});}
   const validId=id=>{if(typeof id!=='string'||id.length>255)throw new Error('会話 ID が正しくありません。');return id;};
   handle('info',()=>({version:app.getVersion(),status:client.status,hasSession:!!client.credentials,platform:process.platform}));
+  handle('pc-state',pcState);
+  handle('pc-auth-state',authState);
+  handle('pc-auth-start',accepted=>auth().start(accepted===true));
+  handle('pc-auth-send',contact=>auth().send(contact));
+  handle('pc-auth-confirm',code=>auth().confirm(code));
+  handle('pc-auth-select',index=>auth().select(index));
+  handle('pc-auth-two-factor-send',index=>auth().twoFactor(index));
+  handle('pc-auth-two-factor-confirm',(index,code)=>auth().twoFactor(index,code));
+  handle('pc-auth-cancel',()=>auth().cancel());
+  handle('pc-connect',async()=>{await connectPc();return authState();});
+  handle('pc-disconnect',()=>{stopAgent();return pcState();});
+  handle('pc-start',(text,id='',extra={})=>{
+    validId(id);
+    const attachments=attachmentItems(extra?.attachments);
+    const replyTo=extra?.replyTo===undefined||extra?.replyTo===null?undefined:validId(extra.replyTo);
+    return startAgent(text,{sessionId:id,extra:{attachments,replyTo}});
+  });
   handle('connect',connect);
   handle('sessions',()=>client.sessions());
   handle('history',(id='',before)=>{validId(id);if(before!==undefined&&!Number.isSafeInteger(before))throw new Error('履歴の位置が正しくありません。');return client.history(id,before);});
   handle('send',async(text,id='',extra={})=>{
     validId(id);
+    if(agentRun&&(id===agentRun.viewSessionId||id===agentRun.sessionId))throw new Error('この会話では PC 操作が実行中です。停止してから送信してください。');
     const attachments=attachmentItems(extra?.attachments);
     if(typeof text!=='string'||text.length>100000||(!text.trim()&&!attachments.length))throw new Error('メッセージを入力してください（上限 100,000 文字）。');
     const replyTo=extra?.replyTo===undefined||extra?.replyTo===null?undefined:validId(extra.replyTo);
@@ -193,7 +246,7 @@ function setupDesktop({getWindow,openTools,localBridge}) {
     });
   }
   // A stop the user asked for is never auto-resumed.
-  handle('cancel',id=>{validId(id);userCancels[id]=Date.now();return client.cancel(id);});
+  handle('cancel',id=>{validId(id);userCancels[id]=Date.now();if(agentRun&&(id===agentRun.viewSessionId||id===agentRun.sessionId))return stopAgent();return client.cancel(id);});
   // The recorded web client allocates a draft UUID locally. Its first
   // chat.stream submission creates the thread; /session/start is a different API.
   handle('new-session',()=>{const id=crypto.randomUUID();draftSessions.add(id);return {session_id:id,draft:true};});
@@ -293,6 +346,7 @@ function setupDesktop({getWindow,openTools,localBridge}) {
       const cancels={};for(const s of sessions){const t=userCancels[s.is_primary?'':s.session_id];if(t)cancels[s.session_id]=t;}
       const {due,waitMs}=planResume(sessions,{now:Date.now(),cancels,history:resume.history});
       for(const s of due){
+        if(agentRun&&s.session_id===agentRun.sessionId)continue;
         if(sendInFlight){scheduleResume(10000);break;}
         resume.history=recordResume(resume.history,s,Date.now());saveResume();
         const id=s.is_primary?'':s.session_id;
@@ -398,7 +452,7 @@ function setupDesktop({getWindow,openTools,localBridge}) {
   });
   // A logged-out website session (or a rejected token) puts the whole app on the login screen.
   client.on('status',({status})=>{if(status==='auth_required')openLogin();});
-  app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);client.disconnect(false);});
-  return {client,connect,startAgent,stopAgent};
+  app.on('before-quit',()=>{quitting=true;clearTimeout(reconnectTimer);stopAgent();client.disconnect(false);});
+  return {client,connect,startAgent,stopAgent,isAgentRunning:()=>!!agentRun||nativeOwners.size>0};
 }
 module.exports={setupDesktop};

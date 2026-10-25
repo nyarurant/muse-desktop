@@ -59,7 +59,7 @@
       <button class="rail-button" id="railIdeas" data-page="ideas" title="アイデア" aria-label="アイデア"><span class="rail-icon"><svg><use href="#i-bulb"/></svg></span></button>
       <button class="rail-button" id="railGoals" data-page="goals" title="目標" aria-label="目標"><span class="rail-icon"><svg><use href="#i-goal"/></svg></span></button>
       <button class="rail-button" id="railLibrary" data-page="library" title="ライブラリ" aria-label="ライブラリ"><span class="rail-icon"><svg><use href="#i-library"/></svg></span></button>
-      <button class="rail-button" id="tools" title="ローカル作業" aria-label="ローカル作業"><span class="rail-icon"><svg><use href="#i-terminal"/></svg></span></button>
+      <button class="rail-button" id="tools" title="PC接続の発行・設定" aria-label="PC接続の発行・設定" aria-haspopup="dialog"><span class="rail-icon"><svg><use href="#i-terminal"/></svg></span></button>
     </div>
     <div class="rail-bottom"><button class="rail-button" id="settings" title="接続と設定" aria-label="接続と設定"><span class="rail-icon"><svg><use href="#i-menu"/></svg></span></button></div>
   </nav>
@@ -96,6 +96,12 @@
     </section>
     <div class="composer-area">
       <section id="approvals" class="approvals" aria-label="確認待ちの操作" hidden></section>
+      <div class="pc-bar">
+        <button type="button" class="pill-button pc-toggle" id="pcMode" aria-pressed="false" aria-describedby="pcHint">このPC: オフ</button>
+        <span id="pcHint" class="pc-hint">オンにすると、この会話からPCのコマンド・ファイル操作を実行します。</span>
+        <button type="button" class="icon-button muted" id="pcFolder" title="作業フォルダーを確認・変更" aria-label="作業フォルダーを確認・変更"><svg><use href="#i-terminal"/></svg></button>
+      </div>
+      <details id="pcLog" class="pc-log" hidden><summary id="pcStatus" aria-live="polite">PCの実行ログ</summary><div id="pcLogEntries"></div></details>
       <div class="reply-bar" id="replyBar" hidden><svg><use href="#i-reply"/></svg><span id="replyText"></span><button type="button" class="icon-button small muted" id="cancelReply" title="返信をやめる" aria-label="返信をやめる"><svg><use href="#i-close"/></svg></button></div>
       <div class="attachments" id="attachmentList" hidden></div>
       <form id="composerForm" class="composer">
@@ -130,6 +136,6 @@
 
   <dialog id="settingsDialog"><div class="dialog-heading"><h2>接続と設定</h2><button class="icon-button muted" id="closeSettings" aria-label="設定を閉じる"><svg><use href="#i-close"/></svg></button></div><p class="dialog-description">Muse アカウントでログインして接続します。ログインが切れたときは、ログイン画面が自動で開きます。</p><div class="setting-row"><div><strong>Muse アカウント</strong><p>ログイン用のウィンドウを開きます。</p></div><button class="pill-button" id="login">ログイン</button></div><div class="setting-row"><div><strong>接続を更新</strong><p>認証と会話一覧を再取得します。</p></div><button class="pill-button" id="reconnect">再接続</button></div><div class="setting-row"><div><strong>外観</strong><p>Web 版の Muse と同じダーク表示が既定です。</p></div><select id="themeMode" aria-label="外観"><option value="dark">ダーク</option><option value="light">ライト</option><option value="system">システムに合わせる</option></select></div><div class="setting-row"><div><strong>承認の自動化</strong><p>Muse の「今回許可」を自動で押します。</p></div><select id="approvalMode" aria-label="承認の自動化"><option value="manual">手動（毎回確認）</option><option value="auto">自動（Web アクセスなど安全なもの）</option><option value="important">重要なものだけ確認</option><option value="bypass">Bypass（すべて許可）</option></select></div><div class="setting-row"><div><strong>止まったら自動で再開</strong><p>作業が途中で止まったら、30 秒後に再開を指示します（自分で停止したときは除く）。</p></div><select id="autoResume" aria-label="止まったら自動で再開"><option value="on">オン</option><option value="off">オフ</option></select></div><div class="dialog-note">接続情報は Windows の暗号化ストレージに保存します。通信記録そのものはコピーしません。</div><div class="dialog-footer"><span>Muse App · Community</span><span id="dialogVersion"></span></div></dialog>
   <dialog id="askDialog"><form method="dialog"><div class="dialog-heading"><h2 id="askTitle"></h2></div><p class="dialog-description" id="askText"></p><input id="askInput" class="dialog-input" maxlength="200" autocomplete="off" hidden><div class="dialog-actions"><button class="pill-button" value="cancel" formnovalidate>キャンセル</button><button class="primary-button" id="askOk" value="ok">OK</button></div></form></dialog>
-  <script src="chat-model.js"></script><script src="app-renderer.js"></script>
+  <script src="chat-model.js"></script><script src="app-renderer.js"></script><script src="pc-setup-renderer.js"></script>
 </body>
 </html>

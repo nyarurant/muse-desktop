@@ -131,14 +131,22 @@ class MuseClient extends EventEmitter {
     else body=Buffer.isBuffer(options.body)?options.body:Buffer.from(JSON.stringify(params));
     const r=this.transport.request(verb,path,body,[['x-app-id',this.credentials.appId],['Content-Type',options.contentType||'application/json'],['Accept-Encoding','identity']],options.service||0);
     return new Promise((resolve,reject)=>{
-      const pending={resolve,reject,path,status:0,chunks:[],size:0,text:'',decoder:new TextDecoder(),onEvent:options.onEvent,stream:!!options.stream,raw:!!options.raw,contentType:'',settled:false};
+      const pending={resolve,reject,path,subscriptionScope:options.subscriptionScope,status:0,chunks:[],size:0,text:'',decoder:new TextDecoder(),onEvent:options.onEvent,stream:!!options.stream,raw:!!options.raw,contentType:'',settled:false};
       pending.timer=setTimeout(()=>{this.cancelRequest(r.id);reject(new Error('Muse の応答がタイムアウトしました。送信済みの可能性があるため、自動再送はしません。'));},options.timeout||30000);
       this.pending.set(r.id.toString(),pending);
       try { for(const frame of r.frames)this.ws.send(frame); } catch {this.cancelRequest(r.id);reject(new Error('送信中に通信が切れました。'));}
     });
   }
-  cancelRequest(id) {
-    const p=this.pending.get(String(id));if(p){clearTimeout(p.timer);this.pending.delete(String(id));}
+  cancelRequest(id,completeSubscription=false) {
+    const p=this.pending.get(String(id));if(p){
+      clearTimeout(p.timer);this.pending.delete(String(id));
+      // A view change can cancel a subscription before its initial ack. Its IPC
+      // caller must still receive a reply; otherwise Electron reports "reply was
+      // never sent". Request timeouts retain their own rejection path.
+      if(completeSubscription&&!p.settled&&p.path==='/chat/subscribe'){
+        p.settled=true;p.resolve({subscribed:false,cancelled:true});
+      }
+    }
     if(this.transport&&this.ws?.readyState===WebSocket.OPEN)for(const f of this.transport.reset(BigInt(id)))this.ws.send(f);
   }
   record(p,value) {
@@ -191,8 +199,17 @@ class MuseClient extends EventEmitter {
   sessions() {return this.request('GET','/api/session/list',{limit:100});}
   history(sessionId='',before) {return this.request('GET','/chat/history',{limit:50,session_id:sessionId,...before!==undefined?{before_seq:before}:{}});}
   subscribe(sessionId='') {
-    for(const [id,p]of this.pending)if(p.path==='/chat/subscribe')this.cancelRequest(id);
+    for(const [id,p]of this.pending)if(p.path==='/chat/subscribe'&&!p.subscriptionScope)this.cancelRequest(id,true);
     return this.request('POST','/chat/subscribe',{...(sessionId?{session_id:sessionId}:{}),capabilities:['chat_cancel','delta_stream']},{stream:true});
+  }
+  subscribeAgent(sessionId,scope) {
+    if(typeof scope!=='string'||!scope)throw new Error('PC 作業の購読 ID が必要です。');
+    this.closeAgentSubscription(scope);
+    return this.request('POST','/chat/subscribe',{session_id:sessionId,capabilities:['chat_cancel','delta_stream']},{stream:true,subscriptionScope:scope});
+  }
+  closeAgentSubscription(scope) {
+    if(typeof scope!=='string'||!scope)return;
+    for(const [id,p]of this.pending)if(p.path==='/chat/subscribe'&&p.subscriptionScope===scope)this.cancelRequest(id,true);
   }
   // With attachments the web client sends `items` (text + image/file parts); a reply adds `in_reply_to`.
   send(text,sessionId,nodeId,{replyTo,attachments}={}) {

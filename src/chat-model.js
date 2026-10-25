@@ -41,4 +41,28 @@ function applyDelta(existing,event) {
   const message={...prior,id:p.message_id,role:'assistant',content,seq:prior?.seq??Number(p.message_seq??p.seq??0),time:prior?.time??Date.now(),sessionId:p.session_id||'',lastDeltaSeq:Number(p.seq)||0};
   return [...existing.filter(m=>m.id!==message.id),message].sort((a,b)=>a.seq-b.seq||a.time-b.time);
 }
-if(typeof module!=='undefined')module.exports={messageFromEvent,mergeMessages,applyDelta,splitAttachments};
+// Presentation only. The backend always parses the original assistant transcript.
+function localMessageView(message) {
+  let content=message.content||'';
+  if(message.role==='user') {
+    if(content.startsWith('[Local agent task — sent by the Muse App on the user\'s PC, not typed by the user]')) {
+      const at=content.indexOf('\nTask from the user:\n');
+      if(at>=0)content=content.slice(at+'\nTask from the user:\n'.length);
+    }else if(content.startsWith('[Local tool results — sent by the Muse App, not typed by the user]')) {
+      return {content:content.slice(content.indexOf(']')+1).trim(),toolResults:true};
+    }
+  }else if(message.role==='assistant') {
+    content=content.replace(/```local-tool[^\S\r\n]*\r?\n([\s\S]*?)```/g,(block,json)=>{
+      try {
+        const call=JSON.parse(json);
+        if(call.tool==='done')return typeof call.summary==='string'?call.summary:'';
+        const labels={run:'コマンド実行',read:'ファイル読み取り',list:'フォルダー確認',write:'ファイル書き込み',edit:'ファイル編集'};
+        if(!labels[call.tool])return block;
+        const target=String(call.command||call.path||'作業フォルダー').replace(/[\r\n`]/g,' ').slice(0,160);
+        return `PC操作: ${labels[call.tool]} — \`${target}\``;
+      }catch{return block;}
+    });
+  }
+  return {content,toolResults:false};
+}
+if(typeof module!=='undefined')module.exports={messageFromEvent,mergeMessages,applyDelta,splitAttachments,localMessageView};
