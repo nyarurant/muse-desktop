@@ -38,6 +38,11 @@ function secondsNow() {
   return Date.now() / 1000;
 }
 
+function gameName(event) {
+  const title = typeof event?.title === 'string' ? event.title.replace(/[\r\n]/g, ' ').trim().slice(0, 60) : '';
+  return title ? `（${title}）` : '';
+}
+
 function describe(event) {
   switch (event?.type) {
     case 'click':
@@ -50,10 +55,11 @@ function describe(event) {
       return 'ユーザーが戻ってきたので、目を覚ました。';
     case 'returned':
       return `ユーザーが ${Math.max(1, Number(event.minutes) || 1)} 分ぶりに PC に戻ってきた。`;
+    // game:false is something else filling the screen (a video); title is the game's name when known.
     case 'game-start':
-      return 'ユーザーのゲームが始まった。';
+      return event.game === false ? 'ユーザーが全画面で何か（動画など）を見始めた。' : `ユーザーがゲーム${gameName(event)}を始めた。`;
     case 'game-end':
-      return 'ユーザーのゲームが終わった。';
+      return event.game === false ? 'ユーザーが全画面の表示を終えた。' : `ユーザーがゲーム${gameName(event)}を終えた。`;
     case 'game-peek':
       return 'ユーザーはゲーム中で、今の画面を見ている。';
     case 'checkin':
@@ -197,6 +203,9 @@ function createCompanionLink({
   let sendFailures = 0;
   let pollFailures = 0;
   let game = { active: false, at: Number.NEGATIVE_INFINITY, id: null, synthetic: false };
+  // The window of the game she was last told started (and not yet told ended). It outlives a companion
+  // restart, so the same game still running is not announced again.
+  let knownGameWindow = null;
   let draftSessionId = '';
   let draftSessionTitle = '';
   let lastReplyAt = Number.NEGATIVE_INFINITY;
@@ -227,7 +236,9 @@ function createCompanionLink({
       // so an actual end/peek event emitted during the next polling interval
       // is accepted even when its timestamp is a few seconds before now.
       game = { active: true, foreground: true, at: currentTime, id, synthetic: true };
-      enqueue({ type: 'game-start', id, at: currentTime, source: 'state' }, currentTime);
+      if (value.windowId && String(value.windowId) === knownGameWindow) return true;
+      knownGameWindow = value.windowId ? String(value.windowId) : null;
+      enqueue({ type: 'game-start', id, at: currentTime, source: 'state', game: value.game, title: value.title }, currentTime);
       return true;
     } catch (error) {
       logFailure('game-state', error);
@@ -287,6 +298,8 @@ function createCompanionLink({
       }
       if (at < game.at) return false;
       game = { active: true, foreground: true, at, id: event.id ?? null, synthetic: false };
+      if (event.windowId && String(event.windowId) === knownGameWindow) return false; // same game, companion restarted
+      knownGameWindow = event.windowId ? String(event.windowId) : null;
       pending = pending.filter((item) => !GAME_TYPES.has(item.event.type));
       retainedCapture = null;
       return enqueue(event, currentTime);
@@ -295,6 +308,7 @@ function createCompanionLink({
       // A close event without a matching accepted start is the false-close case.
       if (!game.active || (!game.synthetic && at < game.at)) return false;
       game = { active: false, at, id: event.id ?? null, synthetic: false };
+      knownGameWindow = null;
       pending = pending.filter((item) => !GAME_TYPES.has(item.event.type));
       retainedCapture = null;
       return enqueue(event, currentTime);

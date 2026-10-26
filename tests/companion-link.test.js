@@ -318,8 +318,8 @@ test('a game ending discards a failed start image and stale start notification',
   });
   await link.poll(); current = 1; await link.poll(); current = 3; await link.poll();
   assert.equal(sent.length, 2);
-  assert.doesNotMatch(sent[1][0], /ゲームが始まった/);
-  assert.match(sent[1][0], /ゲームが終わった/);
+  assert.doesNotMatch(sent[1][0], /ゲームを始めた/);
+  assert.match(sent[1][0], /ゲームを終えた/);
   assert.deepEqual(sent[1][2], {});
 });
 
@@ -370,4 +370,31 @@ test('alt-tabbing out of a game and back sends nothing', async (t) => {
   current = 20; await link.poll(); current = 40; await link.poll();
   assert.equal(sent.length, 1);
   assert.equal(link.status().gameActive, true);
+});
+
+test('the same game still running is not announced again after the companion restarts', async (t) => {
+  let current = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { sourceId: 'a', last: 0, events: [] },
+      { sourceId: 'a', last: 1, events: [{ id: 1, type: 'game-start', at: 1, windowId: '42', game: true, title: 'Escape from Tarkov' }] },
+      { sourceId: 'b', last: 1, events: [{ id: 1, type: 'game-start', at: 30, windowId: '42', game: true, title: 'Escape from Tarkov' }] },
+      { sourceId: 'b', last: 1, events: [] },
+    ],
+    gameState: async () => ({ active: true, open: true, windowId: '42', game: true, title: 'Escape from Tarkov' }),
+  });
+  await link.poll(); current = 1; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0][0], /ゲーム（Escape from Tarkov）を始めた/);
+  current = 30; await link.poll(); current = 40; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.equal(link.status().gameActive, true);
+});
+
+test('something full screen that is not a game is not called a game', () => {
+  const { describe } = require('../src/companion-link');
+  assert.match(describe({ type: 'game-start', game: false }), /全画面で何か（動画など）/);
+  assert.doesNotMatch(describe({ type: 'game-start', game: false }), /ゲーム/);
+  assert.match(describe({ type: 'game-end', game: true, title: 'VRChat' }), /ゲーム（VRChat）を終えた/);
 });
