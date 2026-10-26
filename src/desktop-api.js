@@ -133,6 +133,7 @@ function setupDesktop({getWindow,localBridge}) {
           ?'Not here: your reply text already goes to the speech bubble by itself, so do not use say. Faces, emotes, poses and sequences are fine.'
           :'Refused: while answering in the 3D body side chat you may only look at the PC, not change anything ('+ro.reason+'). Read-only commands such as tasklist, dir, type, Get-Process, Get-ChildItem, Get-Content, Select-Object work.'};
       }
+      if(command==='companion.act'&&params?.action!=='say')companionLink.noteBodyMoved();
       const risk=pcGuard?reviewPcCall(command,params,localBridge.workspace()):null;
       if(risk&&!(await confirmPcCall(risk,command,params,timeout)))return {ok:false,error:'The user declined this operation on the PC ('+risk.reason+'). Do not retry it unless the user asks.'};
       const owner='pc-native-'+id;nativeOwners.add(owner);
@@ -496,6 +497,7 @@ function setupDesktop({getWindow,localBridge}) {
       fs.writeFileSync(path.join(dir,date+'.md'),'# '+date+'\n\n'+String(text).slice(0,20000).trim()+'\n');
     },
     say:(text,duration,speechId)=>companionRequest('/say',{text:String(text).slice(0,200),duration:Math.min(15,Math.max(1,Number(duration)||1)),speechId}),
+    emote:name=>companionRequest('/emote/'+encodeURIComponent(name),undefined,'GET'),
     title:async()=>{const r=await client.request('GET','/identity');return (typeof r?.name==='string'&&r.name.trim()?r.name.trim().slice(0,40):'Muse')+' の身体';},
     idleSeconds:()=>powerMonitor.getSystemIdleTime(),
     log:(...args)=>console.warn(...args)});

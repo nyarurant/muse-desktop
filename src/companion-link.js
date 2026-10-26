@@ -159,6 +159,21 @@ function localDay(seconds, offsetDays = 0) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// An expression for her reply when she did not move the body herself during the turn: the first of these
+// that the reply sounds like (the body's emotes: happy, shy, sleepy, surprised, wave).
+const EXPRESSIONS = [
+  ['sleepy', /眠|ねむ|ふぁ[ぁあ]|うとうと|zzz|すやすや|おやすみ/i],
+  ['wave', /おはよ|こんにち[はわ]|こんばん[はわ]|おかえり|ただいま|いってらっしゃい|いってきます|またね|ばいばい|バイバイ/],
+  ['surprised', /えっ|ええ[っ！!]|わっ|びっくり|まじで|マジ|うそ[!！?？]|嘘[!！?？]|[!！][?？]|[?？][!！]/],
+  ['shy', /照れ|恥ずかし|はずかし|べ、べつに|別に[…、]|ばか|バカ|やだ|寂し|さみし|かまって|構って|うそ、/],
+  ['happy', /[!！♪]|ありがと|嬉し|うれし|やった|楽し|たのし|いいね|すご[いく]|えへ|ふふ|よかった|笑/],
+];
+function expressionFor(text) {
+  const t = String(text || '');
+  for (const [name, pattern] of EXPRESSIONS) if (pattern.test(t)) return name;
+  return null;
+}
+
 function canonicalBubbleText(value) {
   let text = typeof value === 'string' ? value.trim() : '';
   if (!text || /```|\b(?:local-tool|tool_call|function_call)\b|companion\.(?:act|info)\b|<tool(?:[_>]|\b)|^\s*\{[^\n]*(?:"(?:tool|action|command)"\s*:)/i.test(text)) return null;
@@ -236,6 +251,7 @@ function createCompanionLink({
   dayLog,
   saveDiary,
   say,
+  emote,
   title = async () => 'Kaguya の身体',
   idleSeconds = () => 0,
   log = () => {},
@@ -275,6 +291,7 @@ function createCompanionLink({
   let awayPings = 0; // how many of the away messages have gone out this time
   let sending = false;
   let talkTurn = false; // the turn in flight answers the user typing to her
+  let bodyMoved = false; // she moved the body herself (companion.act) during the turn in flight
   let companionUp = false;
   let pollBackoffUntil = 0;
   let sendBackoffUntil = 0;
@@ -549,6 +566,9 @@ function createCompanionLink({
     const duration = Math.min(15, Math.max(1, 2.5 + [...text].length * 0.12));
     pendingSpeech = { text, duration, key };
     await speakPending();
+    // No face of her own this turn: one that matches what she said.
+    const expression = !bodyMoved && typeof emote === 'function' ? expressionFor(text) : null;
+    if (expression) await withTimeout(emote(expression), 5000, 'companion emote timed out').catch((error) => logFailure('emote', error));
   }
 
   async function speakPending() {
@@ -664,6 +684,7 @@ function createCompanionLink({
     }
     sending = true;
     talkTurn = batch.items.some((item) => item.event.type === 'talk');
+    bodyMoved = false;
     lastError = '';
     try {
       const result = await deliver(batch.items, currentTime);
@@ -745,6 +766,8 @@ function createCompanionLink({
     // A side-chat turn she should only look during is being answered (from sending it until her reply, or
     // giving up on it). Not when it answers the user typing to her: that is the user asking.
     turnInFlight: () => sending && !talkTurn,
+    // The PC side saw her move the body (companion.act) while a turn is in flight.
+    noteBodyMoved() { if (sending) bodyMoved = true; },
     status: () => ({
       enabled: state.enabled,
       companionUp,
@@ -776,5 +799,6 @@ module.exports = {
   createCompanionLink,
   describe,
   diaryPrompt,
+  expressionFor,
   promptFor,
 };

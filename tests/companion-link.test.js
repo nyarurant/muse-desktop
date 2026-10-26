@@ -531,3 +531,29 @@ test('the night\'s diary uses the day log, is saved, and the bubble only says it
   current += 60; await link.poll();
   assert.equal(sent.length, 1, 'one diary a day');
 });
+
+test('her reply gets a matching expression unless she moved the body herself', async (t) => {
+  const { expressionFor } = require('../src/companion-link');
+  assert.equal(expressionFor('ねむい……先にちょっとだけ寝ててもいい？'), 'sleepy');
+  assert.equal(expressionFor('おかえり、水分もエネルギーも66まで戻ってるね'), 'wave');
+  assert.equal(expressionFor('えっ、もう終わったの？'), 'surprised');
+  assert.equal(expressionFor('べつに、寂しくなんか……うそ、ちょっと寂しい'), 'shy');
+  assert.equal(expressionFor('やった、脱出できたね！'), 'happy');
+  assert.equal(expressionFor('一番はEdgeで約1.4GB使ってる。'), null);
+
+  for (const moved of [false, true]) {
+    let current = 0;
+    const emotes = [];
+    const fixture = linkFixture(t, {
+      now: () => current,
+      responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'click', part: 'head', at: 1 }] }],
+      send: async () => { if (moved) fixture.link.noteBodyMoved(); return { session_id: 'side-session', message_id: 'sent-1' }; },
+      say: async () => {},
+      emote: async (name) => emotes.push(name),
+      replyClient: {},
+      waitForReply: () => ({ promise: Promise.resolve({ text: 'もう、いきなり頭さわるなよぉ！', messageIds: ['r1'] }), accept() {}, cancel() {} }),
+    });
+    await fixture.link.poll(); current = 1; await fixture.link.poll();
+    assert.deepEqual(emotes, moved ? [] : ['happy'], moved ? 'she moved herself: left alone' : 'no face of her own: one is picked');
+  }
+});
