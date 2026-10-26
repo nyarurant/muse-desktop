@@ -357,3 +357,17 @@ test('game check-ins use a fresh image while background check-ins cannot capture
   assert.equal(captures, 2);
   assert.deepEqual(sent[2][2], {});
 });
+
+test('alt-tabbing out of a game and back sends nothing', async (t) => {
+  let current = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'game-start', at: 1 }] },
+      { last: 3, events: [{ id: 2, type: 'game-pause', at: 10 }, { id: 3, type: 'game-resume', at: 12 }] }, { last: 3, events: [] }],
+  });
+  await link.poll(); current = 1; await link.poll();
+  assert.equal(sent.length, 1);
+  current = 20; await link.poll(); current = 40; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.equal(link.status().gameActive, true);
+});

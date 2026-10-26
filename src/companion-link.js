@@ -276,8 +276,9 @@ function createCompanionLink({
       return false;
     }
     if (event.type === 'game-resume') {
+      // Back from an alt-tab: nothing to tell her (it would be a message every alt-tab).
       game.foreground = true;
-      return acceptEvent({ ...event, type: 'game-peek' }, currentTime);
+      return false;
     }
     if (event.type === 'game-start') {
       if (game.active) {
