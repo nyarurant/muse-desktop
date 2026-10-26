@@ -446,3 +446,40 @@ test('a check-in with nothing new is skipped, and dozing off is not told', async
   const { promptFor } = require('../src/companion-link');
   assert.match(promptFor([], false, { current: { app: 'BsgLauncher', title: 'BsgLauncher' } }), /前面: BsgLauncher\n/);
 });
+
+test('while the user is away she hears about it now and then, each mark once', async (t) => {
+  let current = 0;
+  let idle = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    idleSeconds: () => idle,
+    responses: [{ last: 0, events: [] }],
+  });
+  await link.poll();
+  current = 600; idle = 600; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0][0], /10 分 PC から離れている/);
+  assert.match(sent[0][0], /スマホなどから読まれるかもしれません/);
+  current = 700; idle = 700; await link.poll();
+  assert.equal(sent.length, 1, 'not again before the next mark');
+  current = 1500; idle = 1500; await link.poll();
+  assert.equal(sent.length, 2);
+  assert.match(sent[1][0], /25 分/);
+  current = 1600; idle = 1; await link.poll();
+  assert.equal(sent.length, 3);
+  assert.match(sent[2][0], /ぶりに PC に戻ってきた/);
+});
+
+test('a link started long after the user left sends one away message, not one per missed mark', async (t) => {
+  let current = 5000;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    idleSeconds: () => 4800,
+    responses: [{ last: 0, events: [] }],
+  });
+  await link.poll();
+  current = 5002; await link.poll();
+  current = 5004; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0][0], /80 分 PC から離れている/);
+});
