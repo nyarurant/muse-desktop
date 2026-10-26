@@ -50,7 +50,7 @@ function activityLine(activity) {
   if (!cur || !cur.app) return '';
   const app = quoted(cur.app);
   if (cur.youtube) return `いまユーザーの前面: ${app} で YouTube「${quoted(cur.youtube)}」`;
-  if (cur.title) return `いまユーザーの前面: ${app}「${quoted(cur.title)}」`;
+  if (cur.title && quoted(cur.title) !== app) return `いまユーザーの前面: ${app}「${quoted(cur.title)}」`;
   return `いまユーザーの前面: ${app}`;
 }
 
@@ -233,6 +233,7 @@ function createCompanionLink({
   let draftSessionId = '';
   let draftSessionTitle = '';
   let lastReplyAt = Number.NEGATIVE_INFINITY;
+  let lastCheckinKey = null; // what the last check-in said: idle state, what was in front, in a game or not
   let lastSpokenAt = Number.NEGATIVE_INFINITY;
   let lastError = '';
   let retainedCapture = null;
@@ -303,6 +304,8 @@ function createCompanionLink({
   function acceptEvent(raw, currentTime) {
     const event = normalizeEvent(raw, currentTime);
     if (!event) return false;
+    // Dozing off happens because the user is away: nobody would see her answer.
+    if (event.type === 'doze') return false;
     const at = eventAt(event, currentTime);
     if (event.type === 'game-pause') {
       game.foreground = false;
@@ -505,6 +508,11 @@ function createCompanionLink({
     const session = await ensureSession();
     const attachment = await captureIfDue(items, currentTime);
     const front = typeof activity === 'function' ? await withTimeout(activity(), 2000, 'activity timed out').catch(() => null) : null;
+    // A check-in with nothing new since the last one (same idle state, same thing in front, same game state,
+    // no fresh game picture) is not worth a turn.
+    const checkinOnly = items.every((item) => item.event.type === 'checkin');
+    const checkinKey = checkinOnly ? [describe(items[0].event), activityLine(front), game.active && game.foreground !== false].join('|') : null;
+    if (checkinOnly && !attachment && checkinKey === lastCheckinKey) return { sent: true, skipped: true };
     const prompt = promptFor(items.map((item) => item.event), !!attachment, front);
     const extra = attachment ? { attachments: [attachment] } : {};
     const baseline = await baselineFor(session.id, session.fresh);
@@ -537,6 +545,7 @@ function createCompanionLink({
         ack = {};
       }
       sent = true;
+      if (checkinOnly) lastCheckinKey = checkinKey;
       const actualId = ack?.session_id || ack?.sessionId || session.id;
       if (session.fresh) {
         state.sessionId = String(actualId);

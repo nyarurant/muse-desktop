@@ -422,3 +422,25 @@ test('the link asks the companion what is in front for each message', async (t) 
   assert.equal(sent.length, 1);
   assert.match(sent[0][0], /いまユーザーの前面: Visual Studio Code「main\.js - kaguya-companion」/);
 });
+
+test('a check-in with nothing new is skipped, and dozing off is not told', async (t) => {
+  let current = 0;
+  let front = { app: 'Visual Studio Code', title: 'main.js' };
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'doze', at: 1 }] }, { last: 1, events: [] }],
+    activity: async () => ({ enabled: true, current: front }),
+  });
+  await link.poll(); current = 1; await link.poll();
+  assert.equal(sent.length, 0, 'dozing off is not worth a message');
+  current = 301; await link.poll();
+  assert.equal(sent.length, 1, 'the first check-in goes');
+  current = 602; await link.poll();
+  assert.equal(sent.length, 1, 'same thing in front, same idle state: skipped');
+  front = { app: 'Google Chrome', title: 'GitHub' };
+  current = 903; await link.poll();
+  assert.equal(sent.length, 2, 'something else in front: goes');
+  assert.match(sent[1][0], /Google Chrome「GitHub」/);
+  const { promptFor } = require('../src/companion-link');
+  assert.match(promptFor([], false, { current: { app: 'BsgLauncher', title: 'BsgLauncher' } }), /前面: BsgLauncher\n/);
+});
