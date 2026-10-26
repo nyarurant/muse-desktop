@@ -454,6 +454,7 @@ function setupDesktop({getWindow,localBridge}) {
     closeAgentSubscription:scope=>client.closeAgentSubscription(scope),
     captureGame:()=>companionRequest('/game-capture',{}),
     gameState:()=>companionRequest('/game',undefined,'GET'),
+    activity:()=>companionRequest('/activity',undefined,'GET'),
     say:(text,duration,speechId)=>companionRequest('/say',{text:String(text).slice(0,200),duration:Math.min(15,Math.max(1,Number(duration)||1)),speechId}),
     title:async()=>{const r=await client.request('GET','/identity');return (typeof r?.name==='string'&&r.name.trim()?r.name.trim().slice(0,40):'Muse')+' の身体';},
     idleSeconds:()=>powerMonitor.getSystemIdleTime(),
