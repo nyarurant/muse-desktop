@@ -79,6 +79,7 @@ function reviewCommand(command, depth = 0) {
       return why('引用符で書かれたプログラムの起動');
     }
     if (/^[$\d\[\-]/.test(s)) continue; // variables, numbers, [type] casts, operators
+    if (/^[a-z_][\w-]*\s*=/i.test(s)) continue; // a hashtable entry: @{n='MB';e={...}}
     const word = (/^[^\s"']+/.exec(s) || [''])[0].replace(/["']+$/, '');
     const lower = word.toLowerCase();
     if (READERS.has(lower)) {

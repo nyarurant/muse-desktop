@@ -18,6 +18,8 @@ test('what she actually ran to look around is allowed', () => {
     '$p = Get-Process chrome -ErrorAction SilentlyContinue; $p.Count',
     'Get-Content $env:APPDATA\\foo.txt -TotalCount 20 2>&1',
     '[Environment]::GetFolderPath("Desktop")',
+    // a calculated column (hashtable keys are not commands); refused before, seen 2026-10-26
+    "powershell -NoProfile -Command \"Get-Process | Sort-Object WS -Descending | Select-Object -First 8 ProcessName, @{n='MB';e={[math]::Round($_.WS/1MB)}} | Format-Table -AutoSize | Out-String -Width 120\"",
   ]) assert.equal(run(command), null, command);
   assert.equal(reviewReadOnly('file.read', { path: 'C:\\x.txt' }), null);
   assert.equal(reviewReadOnly('companion.act', { action: 'face', json: '{}' }), null);

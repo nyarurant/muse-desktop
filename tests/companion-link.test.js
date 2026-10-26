@@ -485,3 +485,49 @@ test('a link started long after the user left sends one away message, not one pe
   assert.equal(sent.length, 1);
   assert.match(sent[0][0], /80 分 PC から離れている/);
 });
+
+test('typing to her goes first, as the user\'s own words, and is not a look-only turn', async (t) => {
+  let current = 0;
+  let inFlightDuring = null;
+  const fixture = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'talk', text: 'メモ帳を開いて「やあ」って書いて', at: 1 }] }],
+    send: async () => { inFlightDuring = fixture.link.turnInFlight(); return { session_id: 'side-session', message_id: 'sent-1' }; },
+  });
+  await fixture.link.poll(); current = 1; await fixture.link.poll();
+  assert.equal(fixture.sent.length, 1);
+  assert.match(fixture.sent[0][0], /直接話しかけた: 「メモ帳を開いて やあ って書いて」/);
+  assert.match(fixture.sent[0][0], /ユーザー本人のものです/);
+  assert.match(fixture.sent[0][0], /頼まれたことなら、PC で普段どおり操作してかまいません/);
+  assert.equal(inFlightDuring, false, 'the look-only gate is off while answering the user');
+});
+
+test('the night\'s diary uses the day log, is saved, and the bubble only says it was written', async (t) => {
+  // 23:40 local time today.
+  const night = new Date(); night.setHours(23, 40, 0, 0);
+  let current = night.getTime() / 1000;
+  const today = `${night.getFullYear()}-${String(night.getMonth() + 1).padStart(2, '0')}-${String(night.getDate()).padStart(2, '0')}`;
+  const saved = [];
+  const said = [];
+  const asked = [];
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }],
+    dayLog: async (date) => { asked.push(date); return { date, activeMinutes: 185, firstAt: '09:02', lastAt: '23:31', apps: [{ name: 'Google Chrome', minutes: 95 }], games: [{ name: 'Escape from Tarkov', minutes: 70 }], videos: [{ name: 'Lofi beats', minutes: 20 }] }; },
+    saveDiary: async (date, text) => saved.push([date, text]),
+    say: async (text) => said.push(text),
+    replyClient: {},
+    waitForReply: () => ({ promise: Promise.resolve({ text: '今日はタルコフで大変そうだった。', messageIds: ['r1'] }), accept() {}, cancel() {} }),
+  });
+  await link.poll(); current += 2; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.deepEqual(asked, [today]);
+  assert.match(sent[0][0], /夜です。今日のユーザーの記録/);
+  assert.match(sent[0][0], /3時間5分（09:02〜23:31）/);
+  assert.match(sent[0][0], /Escape from Tarkov（1時間10分）/);
+  assert.match(sent[0][0], /「Lofi beats」/);
+  assert.deepEqual(saved, [[today, '今日はタルコフで大変そうだった。']]);
+  assert.deepEqual(said, ['今日の日記、書いたよ']);
+  current += 60; await link.poll();
+  assert.equal(sent.length, 1, 'one diary a day');
+});

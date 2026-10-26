@@ -486,6 +486,15 @@ function setupDesktop({getWindow,localBridge}) {
     captureGame:()=>companionRequest('/game-capture',{}),
     gameState:()=>companionRequest('/game',undefined,'GET'),
     activity:()=>companionRequest('/activity',undefined,'GET'),
+    dayLog:date=>companionRequest('/activity/day?date='+encodeURIComponent(date),undefined,'GET'),
+    // Her diary also goes to Documents\<name> の日記\<date>.md, to keep and read later.
+    saveDiary:async(date,text)=>{
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return;
+      let name='Muse';try{const r=await client.request('GET','/identity');if(typeof r?.name==='string'&&r.name.trim())name=r.name.trim().slice(0,40);}catch{}
+      const dir=path.join(app.getPath('documents'),name.replace(/[\\/:*?"<>|]/g,'_')+' の日記');
+      fs.mkdirSync(dir,{recursive:true});
+      fs.writeFileSync(path.join(dir,date+'.md'),'# '+date+'\n\n'+String(text).slice(0,20000).trim()+'\n');
+    },
     say:(text,duration,speechId)=>companionRequest('/say',{text:String(text).slice(0,200),duration:Math.min(15,Math.max(1,Number(duration)||1)),speechId}),
     title:async()=>{const r=await client.request('GET','/identity');return (typeof r?.name==='string'&&r.name.trim()?r.name.trim().slice(0,40):'Muse')+' の身体';},
     idleSeconds:()=>powerMonitor.getSystemIdleTime(),
