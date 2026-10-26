@@ -67,8 +67,11 @@ test('urgent events flush quickly while check-ins remain bounded to five minutes
   assert.equal(sent.length, 1, 'a check-in must not fire before five minutes');
   current = 300;
   await link.poll();
-  assert.equal(sent.length, 2, 'the five-minute check-in should be delivered when due');
+  assert.equal(sent.length, 1, 'recent interaction postpones a background check-in');
   current = 301;
+  await link.poll();
+  assert.equal(sent.length, 2, 'the check-in is due five minutes after the recent interaction');
+  current = 302;
   await link.poll();
   assert.equal(sent.length, 2, 'the check-in must not repeat every poll');
 });
@@ -87,7 +90,7 @@ test('false game-end events are ignored, failed events retry, and an event curso
     ],
     send: async (...args) => {
       attempts += 1;
-      if (attempts === 1) throw new Error('temporary transport failure');
+      if (attempts === 1) throw Object.assign(new Error('not submitted while disconnected'), { notSubmitted: true });
       return { session_id: 'retry-side', message_id: `sent-${attempts}` };
     },
   });
@@ -172,7 +175,7 @@ test('a captured image is retained for a failed event retry without recapturing'
     captureGame: async () => { captureCalls += 1; return { ok: true, attachment: capture }; },
     send: async () => {
       attempts += 1;
-      if (attempts === 1) throw new Error('temporary transport failure');
+      if (attempts === 1) throw Object.assign(new Error('not submitted while disconnected'), { notSubmitted: true });
       return { session_id: 'side-session', message_id: `sent-${attempts}` };
     },
   });
@@ -289,4 +292,68 @@ test('reply relay is scoped to the dedicated session, uses the native subscripti
   assert.equal(link.status().inFlight, false);
   assert.equal(canonicalBubbleText('```local-tool\ncompanion.act\n```'), null);
   assert.equal(canonicalBubbleText('普通の返事です。'), '普通の返事です。');
+});
+
+test('an uncertain send acknowledgement is not automatically posted twice', async (t) => {
+  let current = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'click', at: 1 }] }, { last: 1, events: [] }],
+    send: async () => { throw new Error('acknowledgement lost'); },
+  });
+  await link.poll(); current = 1; await link.poll(); current = 10; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.match(link.status().lastError, /send-uncertain/);
+});
+
+test('a game ending discards a failed start image and stale start notification', async (t) => {
+  let current = 0;
+  let attempts = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'game-start', at: 1 }] },
+      { last: 2, events: [{ id: 2, type: 'game-end', at: 3 }] }],
+    captureGame: async () => ({ attachment: { type: 'image', mime_type: 'image/jpeg', data_base64: 'aGVsbG8=', filename: 'game.jpg' } }),
+    send: async () => { if (++attempts === 1) throw Object.assign(new Error('offline'), { notSubmitted: true }); return {}; },
+  });
+  await link.poll(); current = 1; await link.poll(); current = 3; await link.poll();
+  assert.equal(sent.length, 2);
+  assert.doesNotMatch(sent[1][0], /ゲームが始まった/);
+  assert.match(sent[1][0], /ゲームが終わった/);
+  assert.deepEqual(sent[1][2], {});
+});
+
+test('failed bubble delivery retries without sending the prompt again', async (t) => {
+  let current = 0;
+  let attempts = 0;
+  const said = [];
+  const { link, sent } = linkFixture(t, {
+    now: () => current, initial: { enabled: true, sessionId: 'side' },
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'click', at: 1 }] }, { last: 1, events: [] }],
+    replyClient: new EventEmitter(), history: async () => ({ chat_events: [] }),
+    waitForReply: () => ({ promise: Promise.resolve({ text: '今の画面、見えてるよ。', messageIds: ['reply'] }), accept() {}, cancel() {} }),
+    say: async (text, duration, id) => { said.push(id); if (++attempts === 1) throw Error('body offline'); },
+  });
+  await link.poll(); current = 1; await link.poll(); current = 3; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.equal(said.length, 2);
+  assert.equal(said[0], said[1]);
+  assert.equal(link.status().lastSpokenAt, 3);
+});
+
+test('game check-ins use a fresh image while background check-ins cannot capture', async (t) => {
+  let current = 0;
+  let captures = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, type: 'game-start', at: 1 }] },
+      { last: 1, events: [] }, { last: 2, events: [{ id: 2, type: 'game-pause', at: 302 }] }, { last: 2, events: [] }],
+    captureGame: async () => { captures++; return { attachment: { type: 'image', mime_type: 'image/jpeg', data_base64: 'aGVsbG8=', filename: 'game.jpg' } }; },
+  });
+  await link.poll(); current = 1; await link.poll(); current = 301; await link.poll();
+  assert.equal(captures, 2);
+  assert.ok(sent[1][2].attachments?.length);
+  current = 302; await link.poll(); current = 601; await link.poll();
+  assert.equal(captures, 2);
+  assert.deepEqual(sent[2][2], {});
 });

@@ -444,7 +444,7 @@ function setupDesktop({getWindow,localBridge}) {
     try{return await response.json();}catch{throw new Error('companion returned invalid JSON');}
   }
   const companionLink=createCompanionLink({dataDir,
-    send:(text,id,extra)=>client.status==='connected'?client.send(text,id,nodeId,extra):Promise.reject(new Error('not connected')),
+    send:(text,id,extra)=>client.status==='connected'?client.send(text,id,nodeId,extra):Promise.reject(Object.assign(new Error('not connected'),{notSubmitted:true})),
     rename:(id,title)=>client.request('POST','/session/rename',{session_id:id,title}),
     sessions:()=>client.sessions(),
     history:id=>client.history(id),
@@ -454,7 +454,7 @@ function setupDesktop({getWindow,localBridge}) {
     closeAgentSubscription:scope=>client.closeAgentSubscription(scope),
     captureGame:()=>companionRequest('/game-capture',{}),
     gameState:()=>companionRequest('/game',undefined,'GET'),
-    say:(text,duration)=>companionRequest('/say',{text:String(text).slice(0,200),duration:Math.min(15,Math.max(1,Number(duration)||1))}),
+    say:(text,duration,speechId)=>companionRequest('/say',{text:String(text).slice(0,200),duration:Math.min(15,Math.max(1,Number(duration)||1)),speechId}),
     title:async()=>{const r=await client.request('GET','/identity');return (typeof r?.name==='string'&&r.name.trim()?r.name.trim().slice(0,40):'Muse')+' の身体';},
     idleSeconds:()=>powerMonitor.getSystemIdleTime(),
     log:(...args)=>console.warn(...args)});

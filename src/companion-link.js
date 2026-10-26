@@ -7,19 +7,20 @@ const { waitForReply: defaultWaitForReply } = require('./agent-reply');
 
 const COMPANION = 'http://127.0.0.1:38741';
 const DEFAULTS = Object.freeze({
-  pollMs: 3000,
-  urgentGapS: 5,
+  pollMs: 1000,
+  urgentGapS: 2,
   checkinS: 300,
   awayS: 600,
   captureGapS: 90,
-  replyTimeoutMs: 15000,
+  replyTimeoutMs: 120000,
+  sendTimeoutMs: 20000,
   replyPollMs: 1000,
   retryBaseS: 2,
   retryMaxS: 60,
 });
 
 const GAME_TYPES = new Set(['game-start', 'game-end', 'game-peek']);
-const CAPTURE_TYPES = new Set(['game-start', 'game-peek']);
+const CAPTURE_TYPES = new Set(['game-start', 'game-peek', 'checkin']);
 
 const PRIORITY = Object.freeze({
   'game-start': 0,
@@ -69,7 +70,7 @@ function promptFor(events, hasImage) {
   const context = lines.length ? lines.join('\n') : 'ユーザーの様子を確認した。';
   const imageHint = hasImage
     ? '添付画像は今のゲーム画面です。見えている内容に触れてください。'
-    : '画面の内容が分からないときは、分からないことを短く自然に伝えてください。';
+    : '今回の出来事に自然に反応してください。新しい画像がないので、以前の画像を現在の画面だと断定しないでください。';
   return [
     'あなたはデスクトップの隅にいる Kaguya です。',
     context,
@@ -202,6 +203,9 @@ function createCompanionLink({
   let lastSpokenAt = Number.NEGATIVE_INFINITY;
   let lastError = '';
   let retainedCapture = null;
+  let pendingSpeech = null;
+  let speaking = false;
+  let activeWait = null;
   const spoken = new Set();
 
   const requestEvents = fetchEvents || (async (after) => {
@@ -214,12 +218,15 @@ function createCompanionLink({
     if (typeof gameState !== 'function') return false;
     try {
       const value = await gameState();
-      if (value?.active !== true) return false;
+      if (value?.active !== true) {
+        if (value?.open) game = { active: true, foreground: false, at: currentTime, id: value.windowId, synthetic: true };
+        return false;
+      }
       const id = `state:${String(value.windowId || value.displayId || 'active')}`;
       // The state endpoint has no event timestamp. Keep this marker separate
       // so an actual end/peek event emitted during the next polling interval
       // is accepted even when its timestamp is a few seconds before now.
-      game = { active: true, at: currentTime, id, synthetic: true };
+      game = { active: true, foreground: true, at: currentTime, id, synthetic: true };
       enqueue({ type: 'game-start', id, at: currentTime, source: 'state' }, currentTime);
       return true;
     } catch (error) {
@@ -262,19 +269,33 @@ function createCompanionLink({
     const event = normalizeEvent(raw, currentTime);
     if (!event) return false;
     const at = eventAt(event, currentTime);
+    if (event.type === 'game-pause') {
+      game.foreground = false;
+      retainedCapture = null;
+      pending = pending.filter((item) => item.event.type !== 'game-peek');
+      return false;
+    }
+    if (event.type === 'game-resume') {
+      game.foreground = true;
+      return acceptEvent({ ...event, type: 'game-peek' }, currentTime);
+    }
     if (event.type === 'game-start') {
       if (game.active) {
         if (game.synthetic) game = { ...game, id: event.id ?? game.id, synthetic: false };
         return false;
       }
       if (at < game.at) return false;
-      game = { active: true, at, id: event.id ?? null, synthetic: false };
+      game = { active: true, foreground: true, at, id: event.id ?? null, synthetic: false };
+      pending = pending.filter((item) => !GAME_TYPES.has(item.event.type));
+      retainedCapture = null;
       return enqueue(event, currentTime);
     }
     if (event.type === 'game-end') {
       // A close event without a matching accepted start is the false-close case.
       if (!game.active || (!game.synthetic && at < game.at)) return false;
       game = { active: false, at, id: event.id ?? null, synthetic: false };
+      pending = pending.filter((item) => !GAME_TYPES.has(item.event.type));
+      retainedCapture = null;
       return enqueue(event, currentTime);
     }
     if (event.type === 'game-peek') {
@@ -325,10 +346,10 @@ function createCompanionLink({
     }
     if (away && idle < 5) {
       away = false;
-      enqueue({ type: 'returned', minutes: Math.max(1, Math.round((currentTime - awaySince) / 60)) }, currentTime);
+      enqueue({ type: 'returned', id: `returned:${currentTime}`, minutes: Math.max(1, Math.round((currentTime - awaySince) / 60)) }, currentTime);
     }
     if (!away && currentTime - lastCheckinAt >= cfg.checkinS && !pending.some((item) => item.event.type === 'checkin')) {
-      enqueue({ type: 'checkin', idle }, currentTime);
+      enqueue({ type: 'checkin', id: `checkin:${currentTime}`, idle }, currentTime);
     }
   }
 
@@ -390,10 +411,10 @@ function createCompanionLink({
     if (!captureGame) return null;
     const captureItems = items.filter((item) => CAPTURE_TYPES.has(item.event.type));
     if (!captureItems.length) return null;
-    if (retainedCapture && captureItems.some((item) => retainedCapture.keys.has(item.key))) {
+    if (!game.active || game.foreground === false) return null;
+    if (retainedCapture && currentTime - retainedCapture.at <= 15 && captureItems.some((item) => retainedCapture.keys.has(item.key))) {
       return retainedCapture.attachment;
     }
-    if (!game.active) return null;
     if (currentTime - lastCaptureAt < cfg.captureGapS) return null;
     try {
       const result = await captureGame();
@@ -401,7 +422,7 @@ function createCompanionLink({
       const attachment = result.attachment || result;
       if (!attachmentIsUsable(attachment)) return null;
       lastCaptureAt = currentTime;
-      retainedCapture = { keys: new Set(captureItems.map((item) => item.key)), attachment };
+      retainedCapture = { keys: new Set(captureItems.map((item) => item.key)), attachment, at: currentTime };
       return attachment;
     } catch (error) {
       logFailure('capture', error);
@@ -410,25 +431,35 @@ function createCompanionLink({
   }
 
   async function relayReply(reply, sessionId) {
-    if (!say || !reply) return;
+    if (!state.enabled || !say || !reply) return;
     lastReplyAt = now();
     const text = canonicalBubbleText(reply.text);
     if (!text) return;
     const ids = Array.isArray(reply.messageIds) ? reply.messageIds : [];
     const key = `${sessionId}:${ids[ids.length - 1] || text}`;
     if (spoken.has(key)) return;
-    spoken.add(key);
+    const duration = Math.min(15, Math.max(1, 2.5 + [...text].length * 0.12));
+    pendingSpeech = { text, duration, key };
+    await speakPending();
+  }
+
+  async function speakPending() {
+    if (!state.enabled || !pendingSpeech || !say || speaking) return;
+    speaking = true;
+    const speech = pendingSpeech;
+    try {
+      await withTimeout(say(speech.text, speech.duration, speech.key), 5000, 'companion speech timed out');
+      lastSpokenAt = now();
+      if (lastError.startsWith('say:')) lastError = '';
+      spoken.add(speech.key);
+      if (pendingSpeech === speech) pendingSpeech = null;
+    } catch (error) { logFailure('say', error); return; }
+    finally { speaking = false; }
     if (spoken.size > 256) {
       const keep = [...spoken].slice(-128);
       spoken.clear();
       for (const item of keep) spoken.add(item);
     }
-    const duration = Math.min(15, Math.max(1, 2.5 + [...text].length * 0.12));
-    try {
-      await withTimeout(say(text, duration), Math.min(5000, Math.max(1, Number(cfg.replyTimeoutMs) || 1)), 'companion speech timed out');
-      lastSpokenAt = now();
-    }
-    catch (error) { logFailure('say', error); }
   }
 
   async function deliver(items, currentTime) {
@@ -441,6 +472,7 @@ function createCompanionLink({
     let waiting = null;
     let replyDeadline = 0;
     let sent = false;
+    const generation = eventGeneration;
     try {
       if (replyClient && typeof waitForReply === 'function') {
         replyDeadline = Date.now() + Math.max(1, Number(cfg.replyTimeoutMs) || 1);
@@ -451,9 +483,19 @@ function createCompanionLink({
           timeoutMs: cfg.replyTimeoutMs,
           pollMs: cfg.replyPollMs,
         });
+        activeWait = waiting;
         waiting?.promise?.catch(() => {});
       }
-      const ack = await withTimeout(send(prompt, session.id, extra), cfg.replyTimeoutMs, 'companion send timed out');
+      let ack;
+      try { ack = await withTimeout(send(prompt, session.id, extra), cfg.sendTimeoutMs, 'companion send timed out'); }
+      catch (error) {
+        if (error?.notSubmitted === true) throw error;
+        // A missing acknowledgement does not prove the service rejected a send.
+        // Continue reading this turn, rather than posting the same message twice.
+        sent = true;
+        logFailure('send-uncertain', error);
+        ack = {};
+      }
       sent = true;
       const actualId = ack?.session_id || ack?.sessionId || session.id;
       if (session.fresh) {
@@ -470,7 +512,10 @@ function createCompanionLink({
       waiting?.accept?.(ack?.message_id);
       if (waiting?.promise) {
         const remaining = Math.max(1, replyDeadline - Date.now());
-        try { await relayReply(await withTimeout(waiting.promise, remaining, 'companion reply timed out'), session.id); }
+        try {
+          const reply = await withTimeout(waiting.promise, remaining, 'companion reply timed out');
+          if (generation === eventGeneration) await relayReply(reply, session.id);
+        }
         catch (error) { logFailure('reply', error); }
       }
       return { sent: true };
@@ -481,6 +526,7 @@ function createCompanionLink({
       throw error;
     } finally {
       waiting?.cancel?.();
+      if (activeWait === waiting) activeWait = null;
       if (closeAgentSubscription) closeAgentSubscription(scope);
     }
   }
@@ -493,13 +539,13 @@ function createCompanionLink({
       return false;
     }
     sending = true;
+    lastError = '';
     try {
       const result = await deliver(batch.items, currentTime);
       if (!result?.sent) return false;
       markDelivered(batch.items);
       lastSentAt = currentTime;
-      lastError = '';
-      if (batch.items.some((item) => item.event.type === 'checkin')) lastCheckinAt = currentTime;
+      lastCheckinAt = currentTime;
       sendFailures = 0;
       sendBackoffUntil = 0;
       return true;
@@ -530,6 +576,7 @@ function createCompanionLink({
       return { skipped: 'events-error' };
     }
     updateIdle(currentTime);
+    if (pendingSpeech && !sending) await speakPending();
     await flush(currentTime);
     return { pending: pending.length, sessionId: state.sessionId || null };
   }
@@ -538,6 +585,7 @@ function createCompanionLink({
     if (!timer && state.enabled) {
       timer = setInterval(() => { poll().catch((error) => logFailure('poll', error)); }, cfg.pollMs);
       timer.unref?.();
+      poll().catch((error) => logFailure('poll', error));
     }
     return timer !== null;
   }
@@ -545,6 +593,7 @@ function createCompanionLink({
   function stop() {
     clearInterval(timer);
     timer = null;
+    activeWait?.cancel?.();
     // Keep pending events so an explicit disable/re-enable does not lose a failed notification.
   }
 
