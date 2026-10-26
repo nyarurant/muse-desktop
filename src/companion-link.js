@@ -160,13 +160,35 @@ function localDay(seconds, offsetDays = 0) {
 }
 
 // An expression for her reply when she did not move the body herself during the turn: the first of these
-// that the reply sounds like (the body's emotes: happy, shy, sleepy, surprised, wave).
+// that the reply sounds like (the body's emotes; the more particular feelings come before the general ones).
 const EXPRESSIONS = [
-  ['sleepy', /眠|ねむ|ふぁ[ぁあ]|うとうと|zzz|すやすや|おやすみ/i],
+  ['cry', /泣|ぐすっ|ぐす…|うぅ…|うえーん|涙/],
+  ['shock', /がーん|ガーン|うそでしょ|嘘でしょ|そんな…/],
+  ['exhausted', /疲れ|つかれた|へとへと|ぐったり|死んだ|しんどい/],
+  ['yawn', /ふぁ[ぁあ]|あくび/],
+  ['sleepy', /眠|ねむ|うとうと|zzz|すやすや|おやすみ/i],
   ['wave', /おはよ|こんにち[はわ]|こんばん[はわ]|おかえり|ただいま|いってらっしゃい|いってきます|またね|ばいばい|バイバイ/],
+  ['love', /大好き|すき…|好き…|好きだよ|♡|❤|ハート/],
+  ['tehe', /てへ|てへぺろ/],
+  ['wink', /なんてね|ないしょ|内緒/],
+  ['flustered', /あわわ|はわ|ど、どう|え、えっと|ち、ちが/],
+  ['angry', /怒|むかつ|ムカ|もう！|許さない/],
+  ['pout', /むー|むぅ|ぷく|ずるい|ひどい|ひどっ|むすっ|いじわる/],
+  ['smug', /ふふん|どや|ドヤ|当然|さすがわたし|さすが私/],
+  ['stare', /じー|じと|ジト|じっと見/],
+  ['blush', /照れ|恥ずかし|はずかし/],
+  ['shy', /べ、べつに|別に[…、]|ばか|バカ|やだ|かまって|構って|うそ、/],
+  ['sad', /悲し|かなし|しょんぼり|残念|さみし|寂し/],
   ['surprised', /えっ|ええ[っ！!]|わっ|びっくり|まじで|マジ|うそ[!！?？]|嘘[!！?？]|[!！][?？]|[?？][!！]/],
-  ['shy', /照れ|恥ずかし|はずかし|べ、べつに|別に[…、]|ばか|バカ|やだ|寂し|さみし|かまって|構って|うそ、/],
-  ['happy', /[!！♪]|ありがと|嬉し|うれし|やった|楽し|たのし|いいね|すご[いく]|えへ|ふふ|よかった|笑/],
+  ['sparkle', /わくわく|ワクワク|キラキラ|楽しみ|すごい[!！]|すごっ/],
+  ['laugh', /あはは|ははは|笑っ|www|ｗｗ|爆笑/],
+  ['giggle', /ふふ|くすくす|えへへ/],
+  ['relieved', /ほっと|ほっ…|よかった|安心/],
+  ['confused', /はて|わからな|分からな|なんで[?？]|どういうこと/],
+  ['thinking', /うーん|んー|考え中|考えて/],
+  ['shake', /ううん|ちがう|違う|だめ|ダメ/],
+  ['nod', /うん、|うんうん|そうだね|了解|わかった/],
+  ['happy', /[!！♪]|ありがと|嬉し|うれし|やった|楽し|たのし|いいね|すご[いく]/],
 ];
 function expressionFor(text) {
   const t = String(text || '');
