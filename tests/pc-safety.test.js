@@ -23,3 +23,18 @@ test('writes ask only for system folders, startup and executables outside the wo
   assert.ok(write('C:\\Users\\me\\Desktop\\run.bat'));
   assert.equal(write('C:\\Windows\\x.txt',65536),null,'later chunks of the same write are not asked again');
 });
+
+test('a deletion written into a script asks when the script is run',(t)=>{
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-safety-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  fs.writeFileSync(path.join(dir,'cleanup.bat'),'@echo off\r\nrd /s /q C:\\work\r\n');
+  fs.writeFileSync(path.join(dir,'outer.cmd'),'call cleanup.bat\r\n');
+  fs.writeFileSync(path.join(dir,'list.ps1'),'Get-ChildItem C:\\work\r\n');
+  const runIn=(c)=>review('system.run',{command:c},dir);
+  assert.match(runIn('cleanup.bat').reason,/フォルダーをまるごと削除（スクリプト cleanup\.bat の中）/);
+  assert.match(runIn(`cmd /c "${path.join(dir,'cleanup.bat')}"`).reason,/cleanup\.bat/);
+  assert.ok(runIn('outer.cmd'),'a script that calls the deleting script');
+  assert.equal(runIn('powershell -File list.ps1'),null,'a script that only lists runs without asking');
+  assert.equal(runIn('missing.bat'),null,'a script that is not there has nothing to check');
+});

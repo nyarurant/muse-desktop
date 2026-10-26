@@ -1,4 +1,5 @@
 'use strict';
+const fs = require('node:fs');
 const path = require('node:path');
 
 // Which PC commands from Muse need the user's OK before they run. Everything else runs as before.
@@ -46,12 +47,38 @@ function inside(child, parent) {
   return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+// Scripts a command runs (a.bat, "C:\x\b.ps1", %TEMP%\c.cmd ...): what is written inside them counts too,
+// or a deletion could be written to a script first and then run without asking.
+const SCRIPT = /"([^"]+\.(?:bat|cmd|ps1|psm1|vbs|wsf|js|py|sh))"|'([^']+\.(?:bat|cmd|ps1|psm1|vbs|wsf|js|py|sh))'|([^\s"'&|;<>()]+\.(?:bat|cmd|ps1|psm1|vbs|wsf|js|py|sh))\b/gi;
+const SCRIPT_MAX = 512 * 1024;
+function expandEnv(file) {
+  return file
+    .replace(/%([^%]+)%/g, (m, name) => process.env[name] ?? m)
+    .replace(/\$env:(\w+)/gi, (m, name) => process.env[name] ?? m);
+}
+function reviewText(text, cwd, depth) {
+  for (const [pattern, reason] of COMMAND_RULES) if (pattern.test(text)) return {reason};
+  if (depth >= 2) return null;
+  for (const m of text.matchAll(SCRIPT)) {
+    const file = path.resolve(cwd, expandEnv(m[1] || m[2] || m[3]));
+    let content;
+    try {
+      const stat = fs.statSync(file);
+      if (!stat.isFile() || stat.size > SCRIPT_MAX) continue;
+      content = fs.readFileSync(file, 'utf8');
+    } catch { continue; }
+    const inner = reviewText(content, path.dirname(file), depth + 1);
+    if (inner) return {reason: `${inner.reason}（スクリプト ${path.basename(file)} の中）`};
+  }
+  return null;
+}
+
 // Returns {reason} when the call should be confirmed, otherwise null.
 function review(command, params, workspace) {
   if (!params || typeof params !== 'object') return null;
   if (command === 'system.run' && typeof params.command === 'string') {
-    for (const [pattern, reason] of COMMAND_RULES) if (pattern.test(params.command)) return {reason};
-    return null;
+    const cwd = path.resolve(workspace || '.', typeof params.cwd === 'string' && params.cwd ? params.cwd : '.');
+    return reviewText(params.command, cwd, 0);
   }
   // Only the first chunk of a write is checked; later chunks continue the same file.
   if (command === 'file.write' && typeof params.path === 'string' && (params.offset ?? 0) === 0) {

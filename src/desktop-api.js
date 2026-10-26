@@ -1,6 +1,8 @@
 'use strict';
 const fs=require('node:fs');
+const os=require('node:os');
 const path=require('node:path');
+const {spawn}=require('node:child_process');
 const crypto=require('node:crypto');
 const {pathToFileURL}=require('node:url');
 const {app,ipcMain,dialog,powerMonitor,safeStorage,session,shell,WebContentsView}=require('electron');
@@ -13,6 +15,7 @@ const {MESSAGE:RESUME_MESSAGE,RESUMABLE,plan:planResume,record:recordResume}=req
 const {createWatcher: createLoginWatcher,MESSAGES: LOGIN_MESSAGES,timeoutMessage: loginTimeoutMessage}=require('./login-flow');
 const {messageFromEvent}=require('./chat-model');
 const {review:reviewPcCall}=require('./pc-safety');
+const {reviewReadOnly}=require('./read-only-commands');
 const {waitForReply}=require('./agent-reply');
 const {PcAuth}=require('./pc-auth');
 const {createPcAuthStore}=require('./pc-auth-store');
@@ -122,6 +125,14 @@ function setupDesktop({getWindow,localBridge}) {
     if(generation!==pcGeneration)throw new Error('PC の接続を中止しました。');
     nativeDevice?.disconnect();
     const device=new NativeDevice({commands:nativeExecutor.commands,displayName:require('node:os').hostname()+' (Windows PC)',execute:async(command,params,timeout,id)=>{
+      // While she answers in the 3D body's side chat, she may only look (src/read-only-commands.js). Muse's
+      // calls do not say which chat they come from, so this covers every call made during that turn.
+      if(companionLink.turnInFlight()){
+        const ro=reviewReadOnly(command,params);
+        if(ro)return {ok:false,error:command==='companion.act'
+          ?'Not here: your reply text already goes to the speech bubble by itself, so do not use say. Faces, emotes, poses and sequences are fine.'
+          :'Refused: while answering in the 3D body side chat you may only look at the PC, not change anything ('+ro.reason+'). Read-only commands such as tasklist, dir, type, Get-Process, Get-ChildItem, Get-Content, Select-Object work.'};
+      }
       const risk=pcGuard?reviewPcCall(command,params,localBridge.workspace()):null;
       if(risk&&!(await confirmPcCall(risk,command,params,timeout)))return {ok:false,error:'The user declined this operation on the PC ('+risk.reason+'). Do not retry it unless the user asks.'};
       const owner='pc-native-'+id;nativeOwners.add(owner);
@@ -443,6 +454,26 @@ function setupDesktop({getWindow,localBridge}) {
     if(!response.ok)throw new Error('companion HTTP '+response.status);
     try{return await response.json();}catch{throw new Error('companion returned invalid JSON');}
   }
+  // Start the 3D body (kaguya-companion) when it is not running and the link is on: at startup and whenever
+  // the link finds it gone. companion-start.json in the data folder can set {dir} or {enabled:false}; the
+  // default is ~/kaguya-companion, run with its own Electron (bundles built by its `npm run build`).
+  let companionStartedAt=0;
+  function startCompanion() {
+    let cfg={};try{cfg=JSON.parse(fs.readFileSync(path.join(dataDir,'companion-start.json'),'utf8'))||{};}catch{}
+    if(cfg.enabled===false||Date.now()-companionStartedAt<120000)return false;
+    const dir=typeof cfg.dir==='string'&&cfg.dir?cfg.dir:path.join(os.homedir(),'kaguya-companion');
+    const exe=path.join(dir,'node_modules','electron','dist','electron.exe');
+    if(!fs.existsSync(exe)||!fs.existsSync(path.join(dir,'renderer.bundle.js')))return false;
+    companionStartedAt=Date.now();
+    const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.ELECTRON_NO_ATTACH_CONSOLE;
+    // Through Start-Process (ShellExecute), not spawned directly: a direct child inherits this app's open
+    // handles, and kept e.g. its debugging port listening after the app had quit.
+    const ps=path.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+    const q=s=>"'"+String(s).replace(/'/g,"''")+"'";
+    try{const child=spawn(ps,['-NoProfile','-NonInteractive','-Command','Start-Process -FilePath '+q(exe)+" -ArgumentList '.' -WorkingDirectory "+q(dir)],{windowsHide:true,stdio:'ignore',env});child.on('error',e=>console.warn('companion start',e.message));child.unref();}
+    catch(e){console.warn('companion start',e.message);return false;}
+    return true;
+  }
   const companionLink=createCompanionLink({dataDir,
     send:(text,id,extra)=>client.status==='connected'?client.send(text,id,nodeId,extra):Promise.reject(Object.assign(new Error('not connected'),{notSubmitted:true})),
     rename:(id,title)=>client.request('POST','/session/rename',{session_id:id,title}),
@@ -460,8 +491,11 @@ function setupDesktop({getWindow,localBridge}) {
     idleSeconds:()=>powerMonitor.getSystemIdleTime(),
     log:(...args)=>console.warn(...args)});
   companionLink.start();
+  // The link polls the body every second; a few seconds in (and every 30 s) start it if it is not up.
+  const keepCompanion=()=>{const s=companionLink.status();if(s.enabled&&!s.companionUp)startCompanion();};
+  setTimeout(keepCompanion,5000).unref?.();setInterval(keepCompanion,30000).unref?.();
   handle('companion-link',()=>companionLink.status());
-  handle('set-companion-link',on=>companionLink.setEnabled(on===true));
+  handle('set-companion-link',on=>{const enabled=companionLink.setEnabled(on===true);if(enabled)setTimeout(keepCompanion,3000);return enabled;});
   handle('approval-mode',()=>approvalMode);
   handle('set-approval-mode',async mode=>{
     if(!APPROVAL_MODES.includes(mode))throw new Error('承認モードの指定が正しくありません。');

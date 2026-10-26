@@ -44,6 +44,9 @@ npm.cmd run dist:portable  # ポータブル版: dist/Muse Desktop Community <ve
 - 「PC 接続の設定」で SDK トークンの準備、メール／電話番号の認証、必要なアカウント選択や追加認証をアプリ内で完了。発行済みのトークンは再利用
 - 認証済みの PC は Muse の端末として起動時に自動で接続（切れたら自動で再接続。ローカル作業ページでオフにするとその間は止まります）。接続中はどの会話からでも、Muse がこの PC のコマンド（`system.run`）・ファイルの読み書き・状態確認を使えます。要求と結果は端末用の通信経路で送受信し、チャット本文のツール指示は解析しません
 - 3D の身体（kaguya-companion などの、`127.0.0.1:38741` の制御 API を持つデスクトップコンパニオン）がこの PC で動いていれば、Muse は PC コマンド `companion.act` / `companion.info` でその身体を動かせます。設定 › このアプリ の「3D の身体と連動」がオンのとき、身体に起きたこと（クリック・居眠りなど）、10 分以上離れてから戻ったこと、5 分ごとの様子を、1 つのサイドチャット（「Muse の名前 の身体」）で Muse に伝えます（伝えるたびに Muse の利用枠を使います）
+  - 身体が動いていなければアプリが起動します（既定は `~/kaguya-companion`。データフォルダーの `companion-start.json` に `{"dir": "..."}` や `{"enabled": false}` を書いて変更・停止）
+  - サイドチャットに答えている間の PC コマンドは「見るだけ」に限ります（`src/read-only-commands.js`。書き込み・削除・起動・送信などは断り、Muse に理由を返します）。Muse の PC 呼び出しにはどの会話からかが含まれないため、その間に別の会話から来たコマンドも同じ扱いになります
+  - 表情や身振りは `companion.act` で付けられます。返事の文章は自動で吹き出しに出るので `say` は断ります
 - ローカル作業ページの「PC タスク」から、新しいサイドチャットで PC 作業を開始することも可能
 
 `Enter` で送信、`Shift+Enter` で改行します。
@@ -89,7 +92,7 @@ npm.cmd run test:live -- --har="C:/path/to/capture.devtools"
 - `main.js`: Electron のメインプロセス、`desktop-api.js`: 画面との IPC と Muse への各種リクエスト
 - `muse-client.js`: ゲートウェイ API クライアント、`noise.js`: 暗号化通信、`chat-model.js`: 会話データの整形
 - `app.html` / `app.css` / `app-renderer.js`: 会話画面。`settings-renderer.js`（設定）、`workspace-renderer.js`（ローカル作業）、`activity-renderer.js`（アクティビティ詳細）、`dictation-renderer.js`（音声入力）、`pc-setup-renderer.js`（PC 接続の設定）
-- `pc-auth.js` / `pc-auth-store.js`: PC の認証、`native-device.js`: 端末通信、`native-executor.js`: PC での実行、`pc-safety.js`: 危険な操作の判定
+- `pc-auth.js` / `pc-auth-store.js`: PC の認証、`native-device.js`: 端末通信、`native-executor.js`: PC での実行、`pc-safety.js`: 危険な操作の判定（実行するスクリプトの中身も見る）、`read-only-commands.js`: 身体のサイドチャット中の「見るだけ」の判定
 - `muse-approval-policy.js`: 自動許可の判定、`auto-resume.js`: 自動再開の判定、`login-flow.js`: ログイン検出
 
 ## ライセンス
