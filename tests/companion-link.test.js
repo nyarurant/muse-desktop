@@ -495,6 +495,28 @@ test('the companion decides away: a video watched without input is not away, a l
   assert.match(sent[sent.length - 1][0], /ぶりに PC に戻ってきた/);
 });
 
+test('her inner monologue reaches what she says: an urge is sent with its thought, and others carry the latest thought', async (t) => {
+  let current = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [
+      { last: 0, events: [] },
+      { last: 1, events: [{ id: 1, at: 1000, type: 'urge', text: 'Welcome back. Want to rest?', thought: 'They came back tired.' }], thought: 'They came back tired.' },
+      { last: 2, events: [{ id: 2, at: 1100, type: 'click', part: 'head' }], thought: 'Was that a pat?' },
+    ],
+  });
+  await link.poll();
+  current = 10; await link.poll();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0][0], /心の中でこう考えていた（英語のメモ）: 「They came back tired\.」/);
+  assert.match(sent[0][0], /伝えたくなった: 「Welcome back\. Want to rest\?」/);
+  assert.doesNotMatch(sent[0][0], /今の心の声/, 'the urge already carries it');
+  current = 100; await link.poll();
+  assert.equal(sent.length, 2);
+  assert.match(sent[1][0], /頭をクリックされた/);
+  assert.match(sent[1][0], /あなたの今の心の声・英語のメモ: 「Was that a pat\?」/);
+});
+
 test('waking up is not sent on its own: coming back already says it', async (t) => {
   let current = 0;
   const { link, sent } = linkFixture(t, {

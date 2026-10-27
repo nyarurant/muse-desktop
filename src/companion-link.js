@@ -37,6 +37,7 @@ const PRIORITY = Object.freeze({
   returned: 1,
   away: 2,
   youtube: 1,
+  urge: 1,
   'game-peek': 2,
   checkin: 3,
 });
@@ -94,6 +95,9 @@ function describe(event) {
       return `ユーザーが YouTube で「${quoted(event.title)}」を見始めた。`;
     case 'game-peek':
       return 'ユーザーはゲーム中で、今の画面を見ている。';
+    // Her own inner monologue (the companion's thinker, in English) made her want to say something.
+    case 'urge':
+      return `あなたは心の中でこう考えていた（英語のメモ）: 「${quoted(event.thought, 500)}」。それでユーザーに伝えたくなった: 「${quoted(event.text, 300)}」。言うなら自然な日本語で、あなたの言葉で短く。`;
     case 'checkin':
       return Number(event.idle) < 60
         ? 'ユーザーは PC を操作中。'
@@ -103,10 +107,12 @@ function describe(event) {
   }
 }
 
-function promptFor(events, hasImage, activity) {
+function promptFor(events, hasImage, activity, thought) {
   const lines = [...new Set(events.map(describe).filter(Boolean))];
   const front = activityLine(activity);
   if (front) lines.push(front);
+  // What she was just thinking (the companion's inner monologue, English): so what she says matches it.
+  if (thought && !events.some((e) => e?.type === 'urge')) lines.push(`（あなたの今の心の声・英語のメモ: 「${quoted(thought, 400)}」）`);
   const context = lines.length ? lines.join('\n') : 'ユーザーの様子を確認した。';
   const imageHint = hasImage
     ? '添付画像は今のゲーム画面です。見えている内容に触れてください。'
@@ -316,6 +322,7 @@ function createCompanionLink({
   // front); without a fresh one, the system idle time alone.
   let presence = null;
   let presenceAt = Number.NEGATIVE_INFINITY;
+  let latestThought = null; // the companion's latest inner thought, if recent
   let awayPings = 0; // how many of the away messages have gone out this time
   let sending = false;
   let talkTurn = false; // the turn in flight answers the user typing to her
@@ -456,6 +463,7 @@ function createCompanionLink({
     const data = await requestEvents(after);
     const rows = Array.isArray(data?.events) ? data.events : [];
     if (data?.presence && typeof data.presence.state === 'string') { presence = data.presence; presenceAt = currentTime; }
+    latestThought = typeof data?.thought === 'string' ? data.thought : null;
     const reportedLast = Number(data?.last);
     const source = typeof data?.sourceId === 'string' && data.sourceId ? data.sourceId
       : typeof data?.source_id === 'string' && data.source_id ? data.source_id : null;
@@ -635,7 +643,7 @@ function createCompanionLink({
     if (checkinOnly && !attachment && checkinKey === lastCheckinKey) return { sent: true, skipped: true };
     const diary = items[0]?.event.type === 'diary' ? items[0].event : null;
     const day = diary && typeof dayLog === 'function' ? await withTimeout(dayLog(diary.date), 3000, 'day log timed out').catch(() => null) : null;
-    const prompt = diary ? diaryPrompt(diary.date, day, diary.late) : promptFor(items.map((item) => item.event), !!attachment, front);
+    const prompt = diary ? diaryPrompt(diary.date, day, diary.late) : promptFor(items.map((item) => item.event), !!attachment, front, latestThought);
     const extra = attachment ? { attachments: [attachment] } : {};
     const baseline = await baselineFor(session.id, session.fresh);
     const scope = `companion-${randomUUID()}`;
