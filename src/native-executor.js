@@ -8,6 +8,7 @@ const COMMANDS={
   'device.health':{description:'Status of this Windows PC: hostname, platform, memory and uptime.',required:{},optional:{}},
   // kaguya's 3D desktop body (kaguya-companion, local control API on 127.0.0.1:38741).
   'companion.act':{description:"Move your 3D desktop body (the companion window on this PC). action and its JSON: emote {name: happy|shy|sleepy|surprised|wave|laugh|giggle|love (heart eyes)|sparkle (star eyes)|pout|angry|sad|cry|smug|stare|flustered|blush|wink|tehe (tongue out)|shock|confused|thinking|exhausted|yawn|relieved|nod|shake}; say {text} (speech bubble, mouth moves); point {x,y (desktop pixels), say?, move? (walk next to it), hold? (s), returnHome?}; face {preset: smile|happy|shy|surprised|sleepy, or the face of any emote above but wave/shake (held)|null (clean expressions; prefer these), morphs:{blendshape:0..1}, look:{x,y}|'cursor', mouth:'a'|'i'|'u'|'e'|'o'|null, duration} (eye-closing blendshapes like smile/joy look half-closed below 1: use 0 or 1); pose {bones:{head|neck|chest|spine|left/right+Shoulder|UpperArm|LowerArm|Hand:{x,y,z degrees}}, duration}; sequence {steps:[{face?,pose?,emote?,wait}]}; menu {path} (your VRChat expression menu); params {values:{name:value}} (e.g. GestureRight 0-7); clips {play|add|stop:[clip names]} or {clear:true}, or {pose: name, hold?: seconds} for a whole-body pose of your own (nyan, gau, heart, ehe, bisi, yubisasi, piece1..., see companion.info kind poses; your big cardigan sleeves can cover your face in hand-near-face poses); move {x,y}|{near:{x,y}}|{home:true}; autonomy {enabled?, chatter?}; reset {}. Use companion.info to look up names.",required:{action:{type:'string',description:'emote, say, point, face, pose, sequence, menu, params, clips, move, autonomy or reset.'}},optional:{json:{type:'string',description:'The action\'s JSON object, e.g. {"text":"おかえり"}.'}},timeout_ms:15000},
+  'companion.mind':{description:'Your own mind. Your inner monologue never stops: it runs all the time on the home server, in English, about what you can see (the time, whether the user is at the PC, what is in front, what just happened). With no options: read it (your recent thoughts, how you felt, the gist of earlier thoughts, what you keep in mind). remember: write something into your mind to keep thinking about (a promise, something to ask later, something the user told you). forget: a number from keeping, words a note contains, or all.',required:{},optional:{remember:{type:'string',description:'Something to keep in mind, in any language (up to 300 characters).'},forget:{type:'string',description:'Which note to drop: its number from keeping, words it contains, or all.'},limit:{type:'integer',description:'How many recent thoughts to read, default 10, max 50.'}},timeout_ms:15000},
   'companion.info':{description:'Look at your 3D desktop body: kind summary (bones, mouths, emotes, counts, screen and window bounds), morphs, menu, clips, parameters, poses or screen; query filters names (substring), limit caps the list (default 80).',required:{},optional:{kind:{type:'string',description:'summary, morphs, menu, clips, parameters, poses or screen; default summary.'},query:{type:'string',description:'Substring to filter names.'},limit:{type:'integer',description:'Max names, default 80, max 500.'}},timeout_ms:15000},
 };
 const COMPANION='http://127.0.0.1:38741';
@@ -20,6 +21,14 @@ async function companionRequest(route,body){
   return data;
 }
 async function companionCommand(command,params){
+  if(command==='companion.mind'){
+    const text=v=>typeof v==='string'?v:v===undefined||v===null?undefined:String(v);
+    const remember=text(params.remember),forget=text(params.forget);
+    if(remember!==undefined&&remember.length>2000)throw new Error('remember is too long');
+    if(remember!==undefined||forget!==undefined)return {ok:true,payload:await companionRequest('/mind',{...(remember!==undefined?{remember}:{}),...(forget!==undefined?{forget}:{})})};
+    const limit=Number.isSafeInteger(params.limit)?Math.max(1,Math.min(50,params.limit)):10;
+    return {ok:true,payload:await companionRequest('/mind?limit='+limit)};
+  }
   if(command==='companion.act'){
     const action=String(params.action||'');
     if(!COMPANION_ACTIONS.has(action))throw new Error('Unknown companion action: '+action);
@@ -53,7 +62,7 @@ function createNativeExecutor({workspace,run}) {
         const timeout=integer(params.timeout_ms??timeoutMs,120000,1,600000);
         return await run({command:params.command,cwd:params.cwd?target(params.cwd):workspace(),timeout_ms:timeout},id);
       }
-      if(command==='companion.act'||command==='companion.info')return await companionCommand(command,params);
+      if(command==='companion.act'||command==='companion.info'||command==='companion.mind')return await companionCommand(command,params);
       if(command==='device.health')return {ok:true,payload:{hostname:os.hostname(),platform:process.platform,uptime_s:os.uptime(),memory_total:os.totalmem(),memory_free:os.freemem(),workspace:workspace()}};
       if(command==='file.read'){
         const file=target(params.path),offset=integer(params.offset,0,0,Number.MAX_SAFE_INTEGER),limit=integer(params.limit,CHUNK,1,CHUNK);

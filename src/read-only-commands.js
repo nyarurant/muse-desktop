@@ -104,6 +104,8 @@ function reviewCommand(command, depth = 0) {
 // Returns null when the call only looks, otherwise {reason}.
 function reviewReadOnly(command, params = {}) {
   if (command === 'file.read' || command === 'device.health' || command === 'companion.info') return null;
+  // Her own mind (reading it, or keeping something in it) changes nothing on the PC.
+  if (command === 'companion.mind') return null;
   if (command === 'companion.act') {
     if (String(params.action || '') === 'say') return why('say（返事は自動で吹き出しに出ます）');
     return null;

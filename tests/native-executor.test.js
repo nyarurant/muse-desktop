@@ -27,3 +27,13 @@ test('cancel discards only its staged file; original data and other files surviv
  const {dir,executor}=fixture(t),file=path.join(dir,'marker.txt');fs.writeFileSync(file,'original');
  await executor.execute('file.write',{path:file,data_b64:'eA=='});executor.dispose();assert.deepEqual(fs.readdirSync(dir),['marker.txt']);assert.equal(fs.readFileSync(file,'utf8'),'original');
 });
+test('companion.mind reads her mind, and writes into it only what she asks',async t=>{
+ const {executor}=fixture(t);const calls=[];const real=global.fetch;t.after(()=>{global.fetch=real;});
+ global.fetch=async(url,init={})=>{calls.push({url:String(url),method:init.method||'GET',body:init.body?JSON.parse(init.body):null});return {ok:true,status:200,json:async()=>({ok:true,thoughts:[{text:'Hmm.'}],keeping:[]})};};
+ const read=await executor.execute('companion.mind',{limit:5});
+ assert.equal(read.ok,true);assert.deepEqual(read.payload.thoughts,[{text:'Hmm.'}]);
+ await executor.execute('companion.mind',{remember:'1時に寝るって言ってた'});
+ await executor.execute('companion.mind',{forget:'all'});
+ assert.deepEqual(calls.map(c=>[c.url.replace('http://127.0.0.1:38741',''),c.method,c.body]),[['/mind?limit=5','GET',null],['/mind','POST',{remember:'1時に寝るって言ってた'}],['/mind','POST',{forget:'all'}]]);
+ assert.ok(executor.commands['companion.mind'].description.includes('inner monologue'));
+});

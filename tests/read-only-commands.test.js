@@ -57,3 +57,8 @@ test('anything that changes, sends, starts or stops is refused', () => {
   assert.ok(reviewReadOnly('file.write', { path: 'x', data_b64: '' }));
   assert.match(reviewReadOnly('companion.act', { action: 'say', json: '{}' }).reason, /吹き出し/);
 });
+
+test('her own mind is not the PC: reading it or keeping something in it is fine in the side chat', () => {
+  assert.equal(reviewReadOnly('companion.mind', {}), null);
+  assert.equal(reviewReadOnly('companion.mind', { remember: 'あとでKappaの話を聞く' }), null);
+});
