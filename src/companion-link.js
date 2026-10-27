@@ -75,8 +75,10 @@ function describe(event) {
       return 'ユーザーが席を離れたので、少し眠くなってきた。';
     case 'woke':
       return 'ユーザーが戻ってきたので、目を覚ました。';
-    case 'away':
-      return `ユーザーが ${Math.max(1, Number(event.minutes) || 1)} 分 PC から離れている（キーボードもマウスも触っていない）。`;
+    case 'away': {
+      const how = { locked: '画面をロックしている', asleep: 'PC がスリープしている', 'idle-in-game': 'ゲームを前面に出したまま、何も触っていない', 'idle-watching': '動画を前面に出したまま、何も触っていない' }[event.reason] || 'キーボードもマウスも触っていない';
+      return `ユーザーが ${Math.max(1, Number(event.minutes) || 1)} 分 PC から離れている（${how}）。`;
+    }
     case 'returned':
       return `ユーザーが ${Math.max(1, Number(event.minutes) || 1)} 分ぶりに PC に戻ってきた。`;
     // game:false is something else filling the screen (a video); title is the game's name when known.
@@ -310,6 +312,10 @@ function createCompanionLink({
   let lastCaptureAt = Number.NEGATIVE_INFINITY;
   let away = false;
   let awaySince = 0;
+  // Whether the user is at the PC, as the companion judges it (lock screen, sleep, a video or game in
+  // front); without a fresh one, the system idle time alone.
+  let presence = null;
+  let presenceAt = Number.NEGATIVE_INFINITY;
   let awayPings = 0; // how many of the away messages have gone out this time
   let sending = false;
   let talkTurn = false; // the turn in flight answers the user typing to her
@@ -397,8 +403,9 @@ function createCompanionLink({
   function acceptEvent(raw, currentTime) {
     const event = normalizeEvent(raw, currentTime);
     if (!event) return false;
-    // Dozing off happens because the user is away: nobody would see her answer.
-    if (event.type === 'doze') return false;
+    // Dozing off happens because the user is away: nobody would see her answer. Waking up is the user
+    // coming back, which "returned" already tells her.
+    if (event.type === 'doze' || event.type === 'woke') return false;
     const at = eventAt(event, currentTime);
     if (event.type === 'game-pause') {
       game.foreground = false;
@@ -448,6 +455,7 @@ function createCompanionLink({
     const after = lastEventId === null ? -1 : lastEventId;
     const data = await requestEvents(after);
     const rows = Array.isArray(data?.events) ? data.events : [];
+    if (data?.presence && typeof data.presence.state === 'string') { presence = data.presence; presenceAt = currentTime; }
     const reportedLast = Number(data?.last);
     const source = typeof data?.sourceId === 'string' && data.sourceId ? data.sourceId
       : typeof data?.source_id === 'string' && data.source_id ? data.source_id : null;
@@ -475,22 +483,26 @@ function createCompanionLink({
   function updateIdle(currentTime) {
     let idle = 0;
     try { idle = Math.max(0, Number(idleSeconds()) || 0); } catch { idle = 0; }
-    if (!away && idle >= cfg.awayS) {
+    const judged = currentTime - presenceAt <= 15 ? presence : null;
+    const gone = judged ? judged.state === 'away' : idle >= cfg.awayS;
+    const back = judged ? judged.state !== 'away' : idle < 5;
+    if (!away && gone) {
       away = true;
-      awaySince = currentTime - idle;
+      const since = Number(judged?.since);
+      awaySince = judged && Number.isFinite(since) && since <= currentTime ? since : currentTime - idle;
       awayPings = 0;
     }
-    if (away && idle >= 5) {
+    if (away && !back) {
       const minutes = (currentTime - awaySince) / 60;
       const marks = cfg.awayPingsMin || [];
       const mark = (i) => (i < marks.length ? marks[i] : (marks[marks.length - 1] || 0) + 60 * (i - marks.length + 1));
       if (marks.length && minutes >= mark(awayPings)) {
         // One message for the mark reached; marks already past (the link started late) are skipped.
         while (minutes >= mark(awayPings)) awayPings += 1;
-        enqueue({ type: 'away', id: `away:${Math.round(awaySince)}:${awayPings}`, minutes: Math.round(minutes) }, currentTime);
+        enqueue({ type: 'away', id: `away:${Math.round(awaySince)}:${awayPings}`, minutes: Math.round(minutes), ...(judged?.reason ? { reason: String(judged.reason) } : {}) }, currentTime);
       }
     }
-    if (away && idle < 5) {
+    if (away && back) {
       away = false;
       enqueue({ type: 'returned', id: `returned:${currentTime}`, minutes: Math.max(1, Math.round((currentTime - awaySince) / 60)) }, currentTime);
     }

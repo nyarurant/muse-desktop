@@ -472,6 +472,40 @@ test('while the user is away she hears about it now and then, each mark once', a
   assert.match(sent[2][0], /ぶりに PC に戻ってきた/);
 });
 
+test('the companion decides away: a video watched without input is not away, a lock screen is', async (t) => {
+  let current = 0;
+  let idle = 0;
+  let presence = { state: 'active', since: 0, reason: null };
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    idleSeconds: () => idle,
+    responses: [() => ({ last: 0, events: [], presence })],
+  });
+  await link.poll();
+  presence = { state: 'watching', since: 100, reason: null };
+  current = 1500; idle = 1500; await link.poll();
+  assert.equal(sent.some(([text]) => /離れている/.test(text)), false, 'watching a video is not away, however long the idle time');
+  const before = sent.length;
+  presence = { state: 'away', since: 1500, reason: 'locked' };
+  current = 2100; idle = 10; await link.poll();
+  assert.equal(sent.length, before + 1);
+  assert.match(sent[before][0], /10 分 PC から離れている（画面をロックしている）/);
+  presence = { state: 'active', since: 2200, reason: null };
+  current = 2200; idle = 1; await link.poll();
+  assert.match(sent[sent.length - 1][0], /ぶりに PC に戻ってきた/);
+});
+
+test('waking up is not sent on its own: coming back already says it', async (t) => {
+  let current = 0;
+  const { link, sent } = linkFixture(t, {
+    now: () => current,
+    responses: [{ last: 0, events: [] }, { last: 1, events: [{ id: 1, at: 1000, type: 'woke' }] }],
+  });
+  await link.poll();
+  current = 10; await link.poll();
+  assert.equal(sent.length, 0);
+});
+
 test('a link started long after the user left sends one away message, not one per missed mark', async (t) => {
   let current = 5000;
   const { link, sent } = linkFixture(t, {
